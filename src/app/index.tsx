@@ -1,98 +1,238 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useRef } from 'react';
+import {
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  Animated,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuthStore } from '@/store/useAuthStore';
+import { colors } from '@/theme/theme';
+import { haptics } from '@/lib/haptics';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+/**
+ * Landing Gate
+ *
+ * Full-screen splash that asks "Are you a Rider or a Driver?"
+ * Tapping a card triggers devBypassLogin() for instant access
+ * to the map screen without Firebase credentials.
+ *
+ * To restore real auth, change onPress to:
+ *   router.push('/(auth)/rider-login')
+ *   router.push('/(auth)/driver-login')
+ */
+export default function LandingGate() {
+  const devBypassLogin = useAuthStore((s) => s.devBypassLogin);
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+    <SafeAreaView style={styles.container}>
+      {/* Branding */}
+      <View style={styles.brandSection}>
+        <View style={styles.logoContainer}>
+          <Text style={styles.logoIcon}>◈</Text>
+        </View>
+        <Text style={styles.brandName}>RideShare</Text>
+        <Text style={styles.tagline}>Your journey, your way</Text>
+      </View>
+
+      {/* Role Selection */}
+      <View style={styles.cardSection}>
+        <Text style={styles.prompt}>How would you like to travel?</Text>
+
+        <RoleCard
+          role="Rider"
+          description="Request a ride and get picked up in minutes"
+          emoji="🚘"
+          accentColor={colors.rider}
+          onPress={() => devBypassLogin('rider')}
+        />
+
+        <RoleCard
+          role="Driver"
+          description="Hit the road and start earning today"
+          emoji="🛣️"
+          accentColor={colors.driver}
+          onPress={() => devBypassLogin('driver')}
+        />
+      </View>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>
+          By continuing, you agree to our Terms of Service
+        </Text>
+      </View>
+    </SafeAreaView>
   );
 }
 
-export default function HomeScreen() {
+/**
+ * RoleCard — Animated card button for role selection
+ */
+function RoleCard({
+  role,
+  description,
+  emoji,
+  accentColor,
+  onPress,
+}: {
+  role: string;
+  description: string;
+  emoji: string;
+  accentColor: string;
+  onPress: () => void;
+}) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    haptics.selection();
+    Animated.spring(scaleAnim, {
+      toValue: 0.97,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 3,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+    <Pressable onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut}>
+      <Animated.View
+        style={[
+          styles.card,
+          {
+            borderColor: accentColor + '30',
+            transform: [{ scale: scaleAnim }],
+          },
+        ]}
+      >
+        <View style={styles.cardContent}>
+          <Text style={styles.cardEmoji}>{emoji}</Text>
+          <View style={styles.cardText}>
+            <Text style={[styles.cardRole, { color: accentColor }]}>
+              I'm a {role}
+            </Text>
+            <Text style={styles.cardDescription}>{description}</Text>
+          </View>
+        </View>
+        <View style={[styles.cardArrow, { backgroundColor: accentColor + '20' }]}>
+          <Text style={[styles.arrowText, { color: accentColor }]}>→</Text>
+        </View>
+      </Animated.View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    backgroundColor: colors.background,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
+  brandSection: {
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    paddingTop: 60,
   },
-  heroSection: {
+  logoContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 24,
+    backgroundColor: colors.rider,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    marginBottom: 16,
+    shadowColor: colors.rider,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    elevation: 8,
   },
-  title: {
+  logoIcon: {
+    fontSize: 36,
+    color: colors.white,
+  },
+  brandName: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 1,
+  },
+  tagline: {
+    fontSize: 16,
+    color: colors.textMuted,
+    marginTop: 8,
+  },
+  cardSection: {
+    gap: 16,
+  },
+  prompt: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.textSecondary,
     textAlign: 'center',
+    marginBottom: 8,
   },
-  code: {
-    textTransform: 'uppercase',
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#1B2B4B',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 5,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 16,
+  },
+  cardEmoji: {
+    fontSize: 36,
+  },
+  cardText: {
+    flex: 1,
+  },
+  cardRole: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  cardDescription: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 4,
+  },
+  cardArrow: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arrowText: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  footer: {
+    paddingBottom: 20,
+    alignItems: 'center',
+  },
+  footerText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
   },
 });
