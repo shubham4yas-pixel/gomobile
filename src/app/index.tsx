@@ -5,96 +5,53 @@ import {
   Pressable,
   StyleSheet,
   Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuthStore } from '@/store/useAuthStore';
-import { colors } from '@/theme/theme';
+import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { colors, radius, shadows, fonts, type } from '@/theme/theme';
 import { haptics } from '@/lib/haptics';
+import { isDriverApp } from '@/config/appVariant';
+
+/** Variant-aware landing copy (Phase 17) — each app sells its own story. */
+const COPY = isDriverApp
+  ? {
+      brand: 'RideShare Driver',
+      tagline: 'Drive. Earn. Repeat.',
+      features: [
+        { icon: '💰', title: 'Earn on your schedule', body: 'Instant trip offers, transparent net earnings' },
+        { icon: '📍', title: 'Smart dispatch', body: 'Matched to the nearest rider automatically' },
+        { icon: '★', title: 'Build your rating', body: 'Great trips grow your reputation', gold: true },
+      ],
+    }
+  : {
+      brand: 'RideShare',
+      tagline: 'Your journey, elevated',
+      features: [
+        { icon: '⚡', title: 'Pickups in minutes', body: 'Live-matched with the nearest driver' },
+        { icon: '🛡', title: 'Trusted rides', body: 'Verified drivers, shared contact, live tracking' },
+        { icon: '★', title: 'Rated 5-star', body: 'Two-sided ratings keep every trip accountable', gold: true },
+      ],
+    };
 
 /**
- * Landing Gate
+ * Landing Screen (Phase 16 — auth-first flow)
  *
- * Full-screen splash that asks "Are you a Rider or a Driver?"
- * Tapping a card triggers devBypassLogin() for instant access
- * to the map screen without Firebase credentials.
- *
- * To restore real auth, change onPress to:
- *   router.push('/(auth)/rider-login')
- *   router.push('/(auth)/driver-login')
+ * Premium brand moment with a single path forward: Get Started → the unified
+ * /(auth)/login screen. Role selection no longer happens here — it moved into
+ * the post-auth complete-profile funnel, matching the Uber/Ola pattern.
  */
-export default function LandingGate() {
-  const devBypassLogin = useAuthStore((s) => s.devBypassLogin);
+export default function Landing() {
+  const router = useRouter();
+  const ctaScale = useRef(new Animated.Value(1)).current;
 
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Branding */}
-      <View style={styles.brandSection}>
-        <View style={styles.logoContainer}>
-          <Text style={styles.logoIcon}>◈</Text>
-        </View>
-        <Text style={styles.brandName}>RideShare</Text>
-        <Text style={styles.tagline}>Your journey, your way</Text>
-      </View>
-
-      {/* Role Selection */}
-      <View style={styles.cardSection}>
-        <Text style={styles.prompt}>How would you like to travel?</Text>
-
-        <RoleCard
-          role="Rider"
-          description="Request a ride and get picked up in minutes"
-          emoji="🚘"
-          accentColor={colors.rider}
-          onPress={() => devBypassLogin('rider')}
-        />
-
-        <RoleCard
-          role="Driver"
-          description="Hit the road and start earning today"
-          emoji="🛣️"
-          accentColor={colors.driver}
-          onPress={() => devBypassLogin('driver')}
-        />
-      </View>
-
-      {/* Footer */}
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>
-          By continuing, you agree to our Terms of Service
-        </Text>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-/**
- * RoleCard — Animated card button for role selection
- */
-function RoleCard({
-  role,
-  description,
-  emoji,
-  accentColor,
-  onPress,
-}: {
-  role: string;
-  description: string;
-  emoji: string;
-  accentColor: string;
-  onPress: () => void;
-}) {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  const handlePressIn = () => {
+  const pressIn = () => {
     haptics.selection();
-    Animated.spring(scaleAnim, {
-      toValue: 0.97,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(ctaScale, { toValue: 0.97, useNativeDriver: true }).start();
   };
-
-  const handlePressOut = () => {
-    Animated.spring(scaleAnim, {
+  const pressOut = () => {
+    Animated.spring(ctaScale, {
       toValue: 1,
       friction: 3,
       tension: 40,
@@ -103,30 +60,86 @@ function RoleCard({
   };
 
   return (
-    <Pressable onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut}>
-      <Animated.View
-        style={[
-          styles.card,
-          {
-            borderColor: accentColor + '30',
-            transform: [{ scale: scaleAnim }],
-          },
-        ]}
-      >
-        <View style={styles.cardContent}>
-          <Text style={styles.cardEmoji}>{emoji}</Text>
-          <View style={styles.cardText}>
-            <Text style={[styles.cardRole, { color: accentColor }]}>
-              I'm a {role}
-            </Text>
-            <Text style={styles.cardDescription}>{description}</Text>
-          </View>
+    <SafeAreaView style={styles.container}>
+      {/* Branding */}
+      <View style={styles.brandSection}>
+        <View style={styles.logoContainer}>
+          <Text style={styles.logoIcon}>◈</Text>
         </View>
-        <View style={[styles.cardArrow, { backgroundColor: accentColor + '20' }]}>
-          <Text style={[styles.arrowText, { color: accentColor }]}>→</Text>
+        <Text style={styles.brandName}>{COPY.brand}</Text>
+        <View style={styles.taglineRow}>
+          <View style={styles.goldDash} />
+          <Text style={styles.tagline}>{COPY.tagline}</Text>
+          <View style={styles.goldDash} />
         </View>
-      </Animated.View>
-    </Pressable>
+      </View>
+
+      {/* Value props */}
+      <View style={styles.features}>
+        {COPY.features.map((f) => (
+          <FeatureRow key={f.title} icon={f.icon} title={f.title} body={f.body} gold={f.gold} />
+        ))}
+      </View>
+
+      {/* CTA */}
+      <View style={styles.ctaSection}>
+        <Pressable
+          onPress={() => router.push('/(auth)/login')}
+          onPressIn={pressIn}
+          onPressOut={pressOut}
+        >
+          <Animated.View style={{ transform: [{ scale: ctaScale }] }}>
+            <LinearGradient
+              colors={[colors.ctaTop, colors.ctaBottom]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={styles.ctaButton}
+            >
+              <Text style={styles.ctaText}>Get Started</Text>
+              <Text style={styles.ctaArrow}>→</Text>
+            </LinearGradient>
+          </Animated.View>
+        </Pressable>
+
+        {/* Web admin shortcut */}
+        {Platform.OS === 'web' && (
+          <Pressable
+            style={styles.adminLink}
+            onPress={() => router.push('/(admin)/dashboard')}
+          >
+            <Text style={styles.adminLinkText}>🖥  God Mode (Admin)</Text>
+          </Pressable>
+        )}
+
+        <Text style={styles.footerText}>
+          By continuing, you agree to our Terms of Service
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function FeatureRow({
+  icon,
+  title,
+  body,
+  gold,
+}: {
+  icon: string;
+  title: string;
+  body: string;
+  gold?: boolean;
+}) {
+  return (
+    <View style={styles.featureRow}>
+      <View style={[styles.featureIcon, gold && styles.featureIconGold]}>
+        <Text style={[styles.featureIconText, gold && { color: colors.gold }]}>{icon}</Text>
+      </View>
+      <View style={styles.featureText}>
+        <Text style={styles.featureTitle}>{title}</Text>
+        <Text style={styles.featureBody}>{body}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -139,99 +152,129 @@ const styles = StyleSheet.create({
   },
   brandSection: {
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: 72,
   },
   logoContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 24,
-    backgroundColor: colors.rider,
+    width: 88,
+    height: 88,
+    borderRadius: radius.lg,
+    backgroundColor: colors.navy,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    shadowColor: colors.rider,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 18,
-    elevation: 8,
+    marginBottom: 20,
+    ...shadows.card,
+    shadowColor: colors.navy,
+    shadowOpacity: 0.35,
   },
   logoIcon: {
-    fontSize: 36,
-    color: colors.white,
+    fontSize: 40,
+    color: colors.gold,
   },
   brandName: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    letterSpacing: 1,
+    ...type.display,
+    color: colors.navy,
+  },
+  taglineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
+  goldDash: {
+    width: 24,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: colors.gold,
   },
   tagline: {
-    fontSize: 16,
-    color: colors.textMuted,
-    marginTop: 8,
-  },
-  cardSection: {
-    gap: 16,
-  },
-  prompt: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontFamily: fonts.medium,
+    fontSize: 15,
     color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 8,
+    letterSpacing: 0.4,
   },
-  card: {
+  features: {
+    gap: 14,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
     backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: radius.md,
     borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    shadowColor: '#1B2B4B',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 5,
+    borderColor: colors.hairline,
+    padding: 16,
+    ...shadows.card,
+    shadowOpacity: 0.07,
   },
-  cardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 16,
-  },
-  cardEmoji: {
-    fontSize: 36,
-  },
-  cardText: {
-    flex: 1,
-  },
-  cardRole: {
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  cardDescription: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  cardArrow: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  featureIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  arrowText: {
-    fontSize: 20,
-    fontWeight: '700',
+  featureIconGold: {
+    backgroundColor: colors.goldSoft,
   },
-  footer: {
-    paddingBottom: 20,
+  featureIconText: {
+    fontSize: 20,
+  },
+  featureText: {
+    flex: 1,
+  },
+  featureTitle: {
+    fontFamily: fonts.semibold,
+    fontSize: 16,
+    color: colors.textPrimary,
+  },
+  featureBody: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  ctaSection: {
+    paddingBottom: 16,
+    gap: 14,
+  },
+  ctaButton: {
+    height: 56,
+    borderRadius: radius.pill,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    ...shadows.glow(colors.ctaBottom),
+  },
+  ctaText: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: colors.white,
+    letterSpacing: 0.3,
+  },
+  ctaArrow: {
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: colors.gold,
+  },
+  adminLink: {
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  adminLinkText: {
+    ...type.label,
+    color: colors.textSecondary,
   },
   footerText: {
-    fontSize: 12,
+    ...type.caption,
     color: colors.textMuted,
     textAlign: 'center',
   },

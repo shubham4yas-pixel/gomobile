@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, shadows, typography } from '@/theme/theme';
+import { colors, radius, shadows, fonts } from '@/theme/theme';
 
 interface SearchBarProps {
   onPress?: () => void;
@@ -57,7 +57,7 @@ const styles = StyleSheet.create({
   placeholder: {
     flex: 1,
     fontSize: 16,
-    fontWeight: typography.weightMedium,
+    fontFamily: fonts.medium,
     color: colors.textSecondary,
   },
   savedChip: {
@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
   },
   savedChipText: {
     fontSize: 12,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
     color: colors.textMuted,
   },
 });

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { Platform } from 'react-native';
 
 /**
@@ -6,8 +7,11 @@ import { Platform } from 'react-native';
  * Mirrors the host split used by `apiService`/`socketService` (web → localhost,
  * native → dev-machine LAN IP). Keep this URL in sync with those.
  */
+// Mirrors socketService — prefers EXPO_PUBLIC_SOCKET_URL (ngrok/deployed), else
+// the platform dev defaults. Keep in sync with socketService / apiService.
 const API_BASE_URL =
-  Platform.OS === 'web' ? 'http://localhost:3001' : 'http://10.243.3.247:3001';
+  process.env.EXPO_PUBLIC_SOCKET_URL ??
+  (Platform.OS === 'web' ? 'http://localhost:3001' : 'http://10.243.3.247:3001');
 
 /** Server response to initialize-intent. `mock` = run in simulated mode. */
 export interface PaymentIntent {
@@ -69,7 +73,7 @@ export async function verifyPayment(result: CheckoutResult): Promise<boolean> {
     const data = await res.json();
     return data?.verified === true;
   } catch (e) {
-    console.warn('[paymentService] verify error:', e);
+    logger.warn('[paymentService] verify error:', e);
     return false;
   }
 }

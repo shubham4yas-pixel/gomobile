@@ -4,163 +4,162 @@ import { User } from 'firebase/auth';
 import {
   loginWithEmail,
   registerWithEmail,
+  loginWithGoogle as googleSignIn,
   logout as firebaseLogout,
 } from '@/services/authService';
+import { saveUserProfile, fetchUserRole } from '@/services/userService';
 
 /**
- * Phone numbers are collected at sign-up (Phase 12) and persisted per-uid in
- * AsyncStorage, so they survive across sessions and are available on a later
- * sign-in (where the form doesn't re-ask for them).
- */
-const phoneKey = (uid: string) => `phone:${uid}`;
-
-async function savePhoneForUid(uid: string, phone: string): Promise<void> {
-  try {
-    await AsyncStorage.setItem(phoneKey(uid), phone);
-  } catch (e) {
-    console.warn('[Auth] Failed to persist phone:', e);
-  }
-}
-
-async function loadPhoneForUid(uid: string): Promise<string | null> {
-  try {
-    return await AsyncStorage.getItem(phoneKey(uid));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Auth Store (Zustand)
+ * Auth Store (Zustand) — Phase 14 real-auth edition
  *
- * Holds the authenticated user, their role (rider/driver), and loading states.
- * The root layout subscribes to onAuthStateChanged and calls setUser/setInitialized.
- * Login screens call login/register actions which delegate to authService.
+ * Holds the authenticated user, their role, and loading state. The role is
+ * persisted to Firestore `users/{uid}` on every login/register so it survives
+ * session restores without re-prompting the user. The root layout fetches it
+ * from Firestore inside `onAuthStateChanged` and calls `setRole` before
+ * `setInitialized(true)`, so the Map always has a role before it renders.
  */
 
 export type UserRole = 'rider' | 'driver';
 
+// Phone is stored in AsyncStorage keyed by uid (Phase 12) for ride contact exchange.
+const phoneKey = (uid: string) => `phone:${uid}`;
+
+async function savePhone(uid: string, phone: string) {
+  try { await AsyncStorage.setItem(phoneKey(uid), phone); } catch { /* ignore */ }
+}
+async function loadPhone(uid: string): Promise<string | null> {
+  try { return await AsyncStorage.getItem(phoneKey(uid)); } catch { return null; }
+}
+
 interface AuthState {
-  // State
   user: User | null;
   role: UserRole | null;
-  /** Account phone number (Phase 12) — collected at sign-up, used for ride contact. */
   phone: string | null;
   isLoading: boolean;
   isInitialized: boolean;
+  needsProfile: boolean;  // true when user is authed but profile is incomplete
   error: string | null;
 
-  // Actions
-  login: (email: string, password: string, role: UserRole) => Promise<boolean>;
-  register: (
-    email: string,
-    password: string,
+  login: (email: string, password: string) => Promise<boolean>;
+  register: (email: string, password: string) => Promise<boolean>;
+  loginWithGoogle: () => Promise<boolean>;
+  completeProfile: (
+    displayName: string,
+    phone: string,
     role: UserRole,
-    phone: string
+    upiId?: string
   ) => Promise<boolean>;
   logout: () => Promise<void>;
-  devBypassLogin: (role: UserRole) => void;
   setUser: (user: User | null) => void;
   setRole: (role: UserRole | null) => void;
   setPhone: (phone: string | null) => void;
+  setNeedsProfile: (value: boolean) => void;
   setInitialized: (value: boolean) => void;
   clearError: () => void;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  // Initial state
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   role: null,
   phone: null,
   isLoading: false,
   isInitialized: false,
+  needsProfile: false,
   error: null,
 
-  // Login action
-  login: async (email, password, role) => {
+  // ── Email / password sign-in (role-agnostic — Phase 16) ──────────────────
+  // Returning users get their role from Firestore; users without a profile
+  // are funneled to complete-profile, same as Google Sign-In.
+  login: async (email, password) => {
     set({ isLoading: true, error: null });
-
     const result = await loginWithEmail(email, password);
-
-    if (result.success) {
-      // Hydrate the phone saved at sign-up (Phase 12).
-      const phone = await loadPhoneForUid(result.user.uid);
-      set({ user: result.user, role, phone, isLoading: false });
-      return true;
-    } else {
+    if (!result.success) {
       set({ isLoading: false, error: result.error });
       return false;
     }
+    const { user } = result;
+    const stored = await fetchUserRole(user.uid);
+    if (stored) {
+      const phone = await loadPhone(user.uid);
+      set({ user, role: stored, phone, needsProfile: false, isLoading: false });
+      return true;
+    }
+    set({ user, role: null, needsProfile: true, isLoading: false });
+    return true;
   },
 
-  // Register action
-  register: async (email, password, role, phone) => {
+  // ── Email / password registration (Phase 16) ─────────────────────────────
+  // New accounts always go through the complete-profile funnel, which collects
+  // name, phone, and role — so registration only needs credentials.
+  register: async (email, password) => {
     set({ isLoading: true, error: null });
-
     const result = await registerWithEmail(email, password);
-
-    if (result.success) {
-      const trimmed = phone.trim();
-      // Persist the phone per-uid so future sign-ins can re-hydrate it.
-      await savePhoneForUid(result.user.uid, trimmed);
-      set({ user: result.user, role, phone: trimmed, isLoading: false });
-      return true;
-    } else {
+    if (!result.success) {
       set({ isLoading: false, error: result.error });
       return false;
     }
+    set({ user: result.user, role: null, needsProfile: true, isLoading: false });
+    return true;
   },
 
-  // Logout action
+  // ── Google Sign-In ────────────────────────────────────────────────────────
+  loginWithGoogle: async () => {
+    set({ isLoading: true, error: null });
+    const result = await googleSignIn();
+    if (!result.success) {
+      // Suppress cancelled — user just dismissed the sheet, not an error.
+      if (!result.cancelled) set({ isLoading: false, error: result.error });
+      else set({ isLoading: false });
+      return false;
+    }
+    const { user, isNewUser } = result;
+    // Returning users: fetch their existing role from Firestore.
+    if (!isNewUser) {
+      const stored = await fetchUserRole(user.uid);
+      if (stored) {
+        const phone = await loadPhone(user.uid);
+        set({ user, role: stored, phone, needsProfile: false, isLoading: false });
+        return true;
+      }
+    }
+    // New users OR returning users without a Firestore profile:
+    // Don't set a role — route them to the complete-profile screen.
+    set({ user, role: null, needsProfile: true, isLoading: false });
+    return true;
+  },
+
+  // ── Complete Profile (onboarding funnel) ──────────────────────────────────
+  completeProfile: async (displayName, phone, role, upiId) => {
+    const { user } = get();
+    if (!user) return false;
+    set({ isLoading: true, error: null });
+    const trimmed = phone.trim();
+    await savePhone(user.uid, trimmed);
+    // Persist the driver's payout VPA (Phase 15) when provided; riders skip it.
+    const cleanUpi = role === 'driver' && upiId?.trim() ? upiId.trim() : null;
+    await saveUserProfile(user.uid, {
+      role,
+      email: user.email,
+      displayName,
+      phone: trimmed,
+      ...(cleanUpi ? { upiId: cleanUpi } : {}),
+    });
+    set({ role, phone: trimmed, needsProfile: false, isLoading: false });
+    return true;
+  },
+
+  // ── Sign-out ──────────────────────────────────────────────────────────────
   logout: async () => {
     set({ isLoading: true });
     await firebaseLogout();
-    set({ user: null, role: null, phone: null, isLoading: false });
+    set({ user: null, role: null, phone: null, isLoading: false, error: null });
   },
 
-  /**
-   * Dev Bypass Login
-   *
-   * Instantly sets a mock user session without touching Firebase.
-   * Use during development to skip the auth flow entirely.
-   * The mock user has just enough shape to satisfy type checks.
-   */
-  devBypassLogin: (role) => {
-    const mockUser = {
-      uid: `dev-${role}-${Date.now()}`,
-      email: `dev-${role}@rideshare.local`,
-      displayName: `Dev ${role.charAt(0).toUpperCase() + role.slice(1)}`,
-      emailVerified: true,
-      isAnonymous: false,
-      metadata: {},
-      providerData: [],
-      providerId: 'dev-bypass',
-      refreshToken: '',
-      tenantId: null,
-      phoneNumber: null,
-      photoURL: null,
-      delete: async () => {},
-      getIdToken: async () => 'dev-token',
-      getIdTokenResult: async () => ({} as any),
-      reload: async () => {},
-      toJSON: () => ({}),
-    } as unknown as User;
-
-    set({
-      user: mockUser,
-      role,
-      // Mock contact number so the Phase 12 contact-exchange flow demos end-to-end.
-      phone: role === 'driver' ? '+15555550101' : '+15555550199',
-      isInitialized: true,
-      isLoading: false,
-      error: null,
-    });
-  },
-
-  // Setters (called by root layout's onAuthStateChanged listener)
+  // Setters called by the root layout's onAuthStateChanged listener.
   setUser: (user) => set({ user }),
   setRole: (role) => set({ role }),
   setPhone: (phone) => set({ phone }),
+  setNeedsProfile: (value) => set({ needsProfile: value }),
   setInitialized: (value) => set({ isInitialized: value }),
   clearError: () => set({ error: null }),
 }));

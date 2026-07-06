@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { Platform } from 'react-native';
 
 /**
@@ -7,8 +8,11 @@ import { Platform } from 'react-native';
  * split used by `socketService` — web talks to localhost, native devices talk
  * to the dev machine's LAN IP. Keep this URL in sync with socketService.
  */
+// Mirrors socketService — prefers EXPO_PUBLIC_SOCKET_URL (ngrok/deployed), else
+// the platform dev defaults. Keep in sync with socketService / paymentService.
 const API_BASE_URL =
-  Platform.OS === 'web' ? 'http://localhost:3001' : 'http://10.243.3.247:3001';
+  process.env.EXPO_PUBLIC_SOCKET_URL ??
+  (Platform.OS === 'web' ? 'http://localhost:3001' : 'http://10.243.3.247:3001');
 
 /**
  * A persisted completed trip — mirrors a `completed_trips` Firestore document.
@@ -23,8 +27,10 @@ export interface TripRecord {
   distanceKm: number;
   durationMin: number;
   currency: string;
-  pickup?: { lat: number; lng: number };
-  dropoff?: { lat: number; lng: number };
+  // `address` is the formatted label captured at booking time (Phase 14); older
+  // trips persisted before then carry coordinates only (address undefined).
+  pickup?: { lat: number; lng: number; address?: string | null };
+  dropoff?: { lat: number; lng: number; address?: string | null };
   date: string; // ISO completion timestamp
   createdAtMs?: number;
   status?: string;
@@ -50,14 +56,14 @@ export async function fetchRideHistory(
     );
 
     if (!res.ok) {
-      console.warn(`[apiService] history fetch failed: HTTP ${res.status}`);
+      logger.warn(`[apiService] history fetch failed: HTTP ${res.status}`);
       return [];
     }
 
     const data = await res.json();
     return Array.isArray(data) ? (data as TripRecord[]) : [];
   } catch (e) {
-    console.warn('[apiService] history fetch error:', e);
+    logger.warn('[apiService] history fetch error:', e);
     return [];
   }
 }

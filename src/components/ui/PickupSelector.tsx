@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { LocatedPlace, PickupMode } from '@/store/useRideStore';
 import { DestinationSearch } from '@/components/ui/DestinationSearch';
-import { colors, radius, typography, withAlpha } from '@/theme/theme';
+import { colors, radius, withAlpha, fonts } from '@/theme/theme';
 
 const ACCENT = colors.rider;
 
@@ -90,7 +90,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
     color: colors.textSecondary,
     letterSpacing: 0.3,
   },
@@ -115,10 +115,10 @@ const styles = StyleSheet.create({
   pillGlyph: { fontSize: 14 },
   pillText: {
     fontSize: 12,
-    fontWeight: typography.weightMedium,
+    fontFamily: fonts.medium,
     color: colors.textSecondary,
   },
-  pillTextActive: { color: ACCENT, fontWeight: typography.weightBold },
+  pillTextActive: { color: ACCENT, fontFamily: fonts.bold },
   currentRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2 },
   pickupDot: {
     width: 10,
@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
     borderColor: ACCENT,
     backgroundColor: colors.surface,
   },
-  currentText: { flex: 1, fontSize: 14, color: colors.textPrimary, fontWeight: typography.weightMedium },
+  currentText: { flex: 1, fontSize: 14, color: colors.textPrimary, fontFamily: fonts.medium },
   customWrap: { gap: 8 },
   hint: { fontSize: 12, color: colors.textMuted, paddingHorizontal: 2 },
 });

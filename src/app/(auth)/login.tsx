@@ -9,39 +9,49 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/useAuthStore';
-import { colors, idealTextOn } from '@/theme/theme';
-
-const ACCENT = colors.rider;
+import { toast } from '@/store/useToastStore';
+import { colors, radius, shadows, fonts, type, elevationShadows } from '@/theme/theme';
 
 /**
- * Rider Login Screen
+ * Unified Auth Screen (Phase 16 — auth-first flow)
  *
- * Email/password form wired to Firebase Auth via Zustand store.
- * Supports both Sign In and Sign Up modes with loading states.
+ * Role-agnostic: users authenticate first (Google or email/password), then
+ * smart routing decides what happens next:
+ *   • Returning user with a Firestore profile → straight to /(app)/map
+ *     (the root layout gate redirects once role lands in the store).
+ *   • New user / no profile → the complete-profile funnel, which collects
+ *     name, phone, and role.
  */
-export default function RiderLogin() {
+export default function Login() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [phone, setPhone] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string; phone?: string }>({});
+  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [googleLoading, setGoogleLoading] = useState(false);
   const buttonScale = useRef(new Animated.Value(1)).current;
 
-  const { login, register, isLoading } = useAuthStore();
+  const { login, register, loginWithGoogle, isLoading } = useAuthStore();
 
-  const validateEmail = (value: string) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(value);
+  const validateEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
+  /** After any successful auth: new users go to the funnel; returning users
+   *  are redirected to the map by the root layout gate once role is set. */
+  const routeAfterAuth = () => {
+    if (useAuthStore.getState().needsProfile) {
+      router.replace('/(auth)/complete-profile');
+    }
   };
 
   const handleSubmit = async () => {
-    const newErrors: { email?: string; password?: string; phone?: string } = {};
+    const newErrors: { email?: string; password?: string } = {};
 
     if (!email.trim()) {
       newErrors.email = 'Email is required';
@@ -55,36 +65,36 @@ export default function RiderLogin() {
       newErrors.password = 'Password must be at least 6 characters';
     }
 
-    // Phone is collected at sign-up (Phase 12) for ride contact exchange.
-    if (isSignUp && phone.replace(/\D/g, '').length < 7) {
-      newErrors.phone = 'Enter a valid phone number';
-    }
-
     setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
 
-    if (Object.keys(newErrors).length === 0) {
-      const success = isSignUp
-        ? await register(email, password, 'rider', phone)
-        : await login(email, password, 'rider');
+    const success = isSignUp
+      ? await register(email, password)
+      : await login(email, password);
 
-      if (!success) {
-        const errorMsg = useAuthStore.getState().error;
-        Alert.alert(
-          isSignUp ? 'Registration Failed' : 'Sign In Failed',
-          errorMsg ?? 'An unexpected error occurred'
-        );
-      }
-      // On success, root layout handles redirect to /(app)/map
+    if (!success) {
+      const errorMsg = useAuthStore.getState().error;
+      toast.error(errorMsg ?? 'An unexpected error occurred');
+      return;
     }
+    routeAfterAuth();
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    const success = await loginWithGoogle();
+    setGoogleLoading(false);
+    if (!success) {
+      const errorMsg = useAuthStore.getState().error;
+      if (errorMsg) toast.error(errorMsg);
+      return;
+    }
+    routeAfterAuth();
   };
 
   const animatePressIn = () => {
-    Animated.spring(buttonScale, {
-      toValue: 0.96,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(buttonScale, { toValue: 0.96, useNativeDriver: true }).start();
   };
-
   const animatePressOut = () => {
     Animated.spring(buttonScale, {
       toValue: 1,
@@ -105,27 +115,52 @@ export default function RiderLogin() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Role Badge */}
-          <View style={styles.badgeContainer}>
-            <View style={[styles.badge, { backgroundColor: ACCENT + '20' }]}>
-              <Text style={styles.badgeEmoji}>🚘</Text>
-              <Text style={[styles.badgeText, { color: ACCENT }]}>Rider</Text>
+          {/* Brand mark */}
+          <View style={styles.markContainer}>
+            <View style={styles.mark}>
+              <Text style={styles.markIcon}>◈</Text>
             </View>
           </View>
 
           {/* Header */}
           <Text style={styles.title}>
-            {isSignUp ? 'Create account' : 'Welcome back'}
+            {isSignUp ? 'Create your account' : 'Welcome back'}
           </Text>
           <Text style={styles.subtitle}>
             {isSignUp
-              ? 'Sign up to start requesting rides'
-              : 'Sign in to request your next ride'}
+              ? 'One account for riding and driving'
+              : 'Sign in to continue your journey'}
           </Text>
 
           {/* Form Card */}
           <View style={styles.formCard}>
-            {/* Email Input */}
+            {/* Google Sign-In */}
+            <Pressable
+              style={[
+                styles.googleButton,
+                (isLoading || googleLoading) && styles.googleButtonDisabled,
+              ]}
+              onPress={handleGoogleSignIn}
+              disabled={isLoading || googleLoading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color={colors.textPrimary} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="logo-google" size={20} color="#4285F4" />
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </>
+              )}
+            </Pressable>
+
+            {/* Divider */}
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* Email */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email</Text>
               <View
@@ -135,7 +170,7 @@ export default function RiderLogin() {
                   email.length > 0 && !errors.email && styles.inputFocused,
                 ]}
               >
-                <Text style={styles.inputIcon}>✉</Text>
+                <Ionicons name="mail-outline" size={18} color={colors.textMuted} />
                 <TextInput
                   style={styles.input}
                   placeholder="your@email.com"
@@ -151,12 +186,10 @@ export default function RiderLogin() {
                   editable={!isLoading}
                 />
               </View>
-              {errors.email && (
-                <Text style={styles.errorText}>{errors.email}</Text>
-              )}
+              {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
             </View>
 
-            {/* Password Input */}
+            {/* Password */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
               <View
@@ -166,7 +199,7 @@ export default function RiderLogin() {
                   password.length > 0 && !errors.password && styles.inputFocused,
                 ]}
               >
-                <Text style={styles.inputIcon}>🔒</Text>
+                <Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your password"
@@ -185,56 +218,24 @@ export default function RiderLogin() {
                   hitSlop={8}
                   disabled={isLoading}
                 >
-                  <Text style={styles.toggleIcon}>
-                    {showPassword ? '🙈' : '👁'}
-                  </Text>
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color={colors.textMuted}
+                  />
                 </Pressable>
               </View>
-              {errors.password && (
-                <Text style={styles.errorText}>{errors.password}</Text>
-              )}
+              {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
             </View>
-
-            {/* Phone Input (sign-up only — Phase 12) */}
-            {isSignUp && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Phone number</Text>
-                <View
-                  style={[
-                    styles.inputContainer,
-                    errors.phone && styles.inputError,
-                    phone.length > 0 && !errors.phone && styles.inputFocused,
-                  ]}
-                >
-                  <Text style={styles.inputIcon}>📞</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="+1 555 123 4567"
-                    placeholderTextColor={colors.textMuted}
-                    value={phone}
-                    onChangeText={(text) => {
-                      setPhone(text);
-                      if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
-                    }}
-                    keyboardType="phone-pad"
-                    autoCorrect={false}
-                    editable={!isLoading}
-                  />
-                </View>
-                {errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
-              </View>
-            )}
 
             {/* Forgot Password */}
             {!isSignUp && (
               <Pressable style={styles.forgotButton} disabled={isLoading}>
-                <Text style={[styles.forgotText, { color: ACCENT }]}>
-                  Forgot password?
-                </Text>
+                <Text style={styles.forgotText}>Forgot password?</Text>
               </Pressable>
             )}
 
-            {/* Submit Button */}
+            {/* Submit */}
             <Pressable
               onPress={handleSubmit}
               onPressIn={animatePressIn}
@@ -244,33 +245,22 @@ export default function RiderLogin() {
               <Animated.View
                 style={[
                   styles.signInButton,
-                  {
-                    backgroundColor: ACCENT,
-                    transform: [{ scale: buttonScale }],
-                    opacity: isLoading ? 0.7 : 1,
-                  },
+                  { transform: [{ scale: buttonScale }], opacity: isLoading ? 0.7 : 1 },
                 ]}
               >
                 {isLoading ? (
-                  <ActivityIndicator color={idealTextOn(ACCENT)} size="small" />
+                  <ActivityIndicator color={colors.white} size="small" />
                 ) : (
-                  <Text style={[styles.signInText, { color: idealTextOn(ACCENT) }]}>
+                  <Text style={styles.signInText}>
                     {isSignUp ? 'Create Account' : 'Sign In'}
                   </Text>
                 )}
               </Animated.View>
             </Pressable>
 
-            {/* Divider */}
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
             {/* Toggle Sign In / Sign Up */}
             <Pressable
-              style={styles.createAccountButton}
+              style={styles.toggleButton}
               onPress={() => {
                 setIsSignUp(!isSignUp);
                 setErrors({});
@@ -278,14 +268,16 @@ export default function RiderLogin() {
               }}
               disabled={isLoading}
             >
-              <Text style={styles.createAccountText}>
+              <Text style={styles.toggleText}>
                 {isSignUp ? 'Already have an account? ' : "Don't have an account? "}
-                <Text style={{ color: ACCENT, fontWeight: '700' }}>
-                  {isSignUp ? 'Sign In' : 'Sign Up'}
-                </Text>
+                <Text style={styles.toggleAction}>{isSignUp ? 'Sign In' : 'Sign Up'}</Text>
               </Text>
             </Pressable>
           </View>
+
+          <Text style={styles.funnelHint}>
+            New here? You'll pick Rider or Driver right after this step.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -303,61 +295,53 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingTop: 16,
     paddingBottom: 40,
   },
-  badgeContainer: {
+  markContainer: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
-  badge: {
-    flexDirection: 'row',
+  mark: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.md,
+    backgroundColor: colors.navy,
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 8,
+    justifyContent: 'center',
+    ...shadows.card,
+    shadowColor: colors.navy,
+    shadowOpacity: 0.3,
   },
-  badgeEmoji: {
-    fontSize: 18,
-  },
-  badgeText: {
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+  markIcon: {
+    fontSize: 26,
+    color: colors.gold,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    ...type.title,
+    color: colors.navy,
     textAlign: 'center',
   },
   subtitle: {
-    fontSize: 16,
+    ...type.body,
     color: colors.textSecondary,
     textAlign: 'center',
     marginTop: 8,
-    marginBottom: 32,
+    marginBottom: 28,
   },
   formCard: {
     backgroundColor: colors.surface,
-    borderRadius: 16,
+    borderRadius: radius.md,
     padding: 24,
     borderWidth: 1,
     borderColor: colors.hairline,
-    shadowColor: '#1B2B4B',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 18,
-    elevation: 6,
+    boxShadow: elevationShadows.raised,
   },
   inputGroup: {
     marginBottom: 20,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...type.label,
     color: colors.textSecondary,
     marginBottom: 8,
   },
@@ -365,7 +349,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.background,
-    borderRadius: 12,
+    borderRadius: radius.sm,
     borderWidth: 1.5,
     borderColor: colors.hairline,
     paddingHorizontal: 14,
@@ -373,25 +357,19 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   inputFocused: {
-    borderColor: ACCENT,
+    borderColor: colors.rider,
   },
   inputError: {
     borderColor: colors.danger,
   },
-  inputIcon: {
-    fontSize: 16,
-  },
   input: {
     flex: 1,
+    fontFamily: fonts.regular,
     fontSize: 16,
     color: colors.textPrimary,
   },
-  toggleIcon: {
-    fontSize: 18,
-    padding: 4,
-  },
   errorText: {
-    fontSize: 12,
+    ...type.caption,
     color: colors.danger,
     marginTop: 6,
     marginLeft: 4,
@@ -402,18 +380,20 @@ const styles = StyleSheet.create({
     marginTop: -8,
   },
   forgotText: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...type.label,
+    color: colors.rider,
   },
   signInButton: {
-    height: 52,
-    borderRadius: 26,
+    height: 54,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.rider,
+    boxShadow: elevationShadows.floating,
   },
   signInText: {
+    fontFamily: fonts.bold,
     fontSize: 17,
-    fontWeight: '700',
     color: colors.white,
   },
   divider: {
@@ -431,11 +411,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textMuted,
   },
-  createAccountButton: {
+  toggleButton: {
     alignItems: 'center',
+    marginTop: 18,
   },
-  createAccountText: {
+  toggleText: {
+    fontFamily: fonts.regular,
     fontSize: 15,
     color: colors.textSecondary,
+  },
+  toggleAction: {
+    fontFamily: fonts.bold,
+    color: colors.rider,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 52,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.hairline,
+    gap: 12,
+  },
+  googleButtonDisabled: {
+    opacity: 0.6,
+  },
+  googleButtonText: {
+    fontFamily: fonts.semibold,
+    fontSize: 16,
+    color: colors.textPrimary,
+  },
+  funnelHint: {
+    ...type.caption,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 20,
   },
 });

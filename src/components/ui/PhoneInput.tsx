@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
-import { colors, radius, typography } from '@/theme/theme';
+import { colors, radius, fonts } from '@/theme/theme';
 
 interface PhoneInputProps {
   value: string;
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
   wrap: { gap: 6 },
   label: {
     fontSize: 13,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
     color: colors.textSecondary,
   },
   inputRow: {
@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    fontWeight: typography.weightMedium,
+    fontFamily: fonts.medium,
     color: colors.textPrimary,
   },
   errorText: { fontSize: 12, color: colors.danger, marginLeft: 4 },

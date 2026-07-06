@@ -26,6 +26,10 @@ export default function AppLayout() {
       }}
     >
       <Stack.Screen
+        name="(tabs)"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
         name="map"
         options={{ title: 'Map', headerShown: false }}
       />
@@ -35,6 +39,10 @@ export default function AppLayout() {
       />
       <Stack.Screen
         name="history"
+        options={{ headerShown: false, animation: 'slide_from_right' }}
+      />
+      <Stack.Screen
+        name="earnings"
         options={{ headerShown: false, animation: 'slide_from_right' }}
       />
     </Stack>

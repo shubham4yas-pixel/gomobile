@@ -22,7 +22,7 @@ import {
   PlaceSuggestion,
   SearchSource,
 } from '@/services/geocoding';
-import { colors, radius, spacing, typography, withAlpha } from '@/theme/theme';
+import { colors, radius, spacing, withAlpha, fonts } from '@/theme/theme';
 
 type Region = {
   latitude: number;
@@ -239,8 +239,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   closeBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  closeIcon: { color: colors.textPrimary, fontSize: 20, fontWeight: typography.weightBold },
-  headerTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: typography.weightBold },
+  closeIcon: { color: colors.textPrimary, fontSize: 20, fontFamily: fonts.bold },
+  headerTitle: { color: colors.textPrimary, fontSize: 18, fontFamily: fonts.bold },
 
   toggle: {
     flexDirection: 'row',
@@ -252,8 +252,8 @@ const styles = StyleSheet.create({
   },
   toggleBtn: { flex: 1, paddingVertical: 10, borderRadius: radius.sm, alignItems: 'center' },
   toggleBtnActive: { backgroundColor: colors.surfaceElevated },
-  toggleText: { color: colors.textSecondary, fontSize: 14, fontWeight: typography.weightMedium },
-  toggleTextActive: { color: colors.textPrimary, fontWeight: typography.weightBold },
+  toggleText: { color: colors.textSecondary, fontSize: 14, fontFamily: fonts.medium },
+  toggleTextActive: { color: colors.textPrimary, fontFamily: fonts.bold },
 
   searchWrap: { flex: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   inputRow: {
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     borderColor: colors.hairline,
   },
   inputIcon: { color: colors.textSecondary, fontSize: 20 },
-  input: { flex: 1, color: colors.textPrimary, fontSize: 16, fontWeight: typography.weightMedium },
+  input: { flex: 1, color: colors.textPrimary, fontSize: 16, fontFamily: fonts.medium },
 
   results: { flex: 1, marginTop: spacing.md },
   hint: { color: colors.textMuted, fontSize: 14, paddingVertical: spacing.lg, textAlign: 'center' },
@@ -289,7 +289,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   resultPinIcon: { fontSize: 18 },
-  resultTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: typography.weightMedium },
+  resultTitle: { color: colors.textPrimary, fontSize: 16, fontFamily: fonts.medium },
   resultSub: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
   sourceNote: { color: colors.textMuted, fontSize: 12, paddingVertical: spacing.lg, textAlign: 'center' },
 
@@ -317,7 +317,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  confirmText: { color: colors.white, fontSize: 17, fontWeight: typography.weightBold },
+  confirmText: { color: colors.white, fontSize: 17, fontFamily: fonts.bold },
 
   resolveOverlay: {
     ...StyleSheet.absoluteFillObject,

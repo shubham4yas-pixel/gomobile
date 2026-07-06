@@ -25,12 +25,12 @@ export default function AuthLayout() {
       }}
     >
       <Stack.Screen
-        name="rider-login"
-        options={{ title: 'Rider Login' }}
+        name="login"
+        options={{ title: '', headerTransparent: true }}
       />
       <Stack.Screen
-        name="driver-login"
-        options={{ title: 'Driver Login' }}
+        name="complete-profile"
+        options={{ title: 'Complete Your Profile', headerBackVisible: false }}
       />
     </Stack>
   );

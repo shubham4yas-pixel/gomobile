@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
 
@@ -32,7 +33,7 @@ export async function requestLocationPermission(): Promise<PermissionResult> {
       status: status as PermissionResult['status'],
     };
   } catch (error) {
-    console.warn('Location permission request failed:', error);
+    logger.warn('Location permission request failed:', error);
     return { granted: false, status: 'denied' };
   }
 }
@@ -51,9 +52,9 @@ export async function getCurrentPosition(): Promise<PositionResult> {
       longitude: location.coords.longitude,
     };
   } catch (error) {
-    console.warn('Failed to get current position:', error);
+    logger.warn('Failed to get current position:', error);
     if (Platform.OS === 'web') {
-      console.log('Using mock web location fallback');
+      logger.debug('Using mock web location fallback');
       return {
         latitude: 37.7749,
         longitude: -122.4194,
@@ -85,7 +86,7 @@ export async function watchPosition(
     );
     return subscription;
   } catch (error) {
-    console.warn('Failed to watch position:', error);
+    logger.warn('Failed to watch position:', error);
     return null;
   }
 }

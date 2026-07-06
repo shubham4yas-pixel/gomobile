@@ -3,7 +3,7 @@ import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-nati
 import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { searchPlaces, resolvePlace, PlaceSuggestion } from '@/services/geocoding';
 import { LocatedPlace } from '@/store/useRideStore';
-import { colors, radius, typography } from '@/theme/theme';
+import { colors, radius, fonts } from '@/theme/theme';
 
 interface DestinationSearchProps {
   onSelected: (place: LocatedPlace) => void;
@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    fontWeight: typography.weightMedium,
+    fontFamily: fonts.medium,
     color: colors.textPrimary,
   },
   listView: {
@@ -127,6 +127,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.hairline,
   },
   rowPin: { fontSize: 16 },
-  rowTitle: { fontSize: 15, fontWeight: typography.weightMedium, color: colors.textPrimary },
+  rowTitle: { fontSize: 15, fontFamily: fonts.medium, color: colors.textPrimary },
   rowSub: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
 });

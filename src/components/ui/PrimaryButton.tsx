@@ -1,7 +1,4 @@
-import { useRef } from 'react';
 import {
-  Animated,
-  Pressable,
   StyleSheet,
   Text,
   ActivityIndicator,
@@ -9,8 +6,15 @@ import {
   ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors, radius, typography, shadows, withAlpha, idealTextOn } from '@/theme/theme';
-import { haptics } from '@/lib/haptics';
+import {
+  colors,
+  radius,
+  fonts,
+  elevationShadows,
+  withAlpha,
+  idealTextOn,
+} from '@/theme/theme';
+import { PressableScale } from '@/components/ui/PressableScale';
 
 type Variant = 'gradient' | 'accent' | 'outline';
 
@@ -27,11 +31,12 @@ interface PrimaryButtonProps {
 }
 
 /**
- * The app's primary call-to-action.
+ * The app's primary call-to-action (Phase 17 premium edition).
  *
- * `gradient` renders the signature black CTA; `accent` fills with the role
- * color; `outline` is a quieter bordered variant. All variants share a tactile
- * press-scale animation.
+ * `gradient` renders the signature deep-blue CTA with a layered floating
+ * shadow; `accent` fills with the role color; `outline` is a quieter bordered
+ * variant. All variants share the PressableScale spring + haptic press —
+ * the animation runs on the UI thread via Reanimated worklets.
  */
 export function PrimaryButton({
   label,
@@ -43,20 +48,6 @@ export function PrimaryButton({
   loading = false,
   style,
 }: PrimaryButtonProps) {
-  const scale = useRef(new Animated.Value(1)).current;
-
-  const pressIn = () => {
-    haptics.light();
-    Animated.spring(scale, { toValue: 0.96, useNativeDriver: true }).start();
-  };
-  const pressOut = () =>
-    Animated.spring(scale, {
-      toValue: 1,
-      friction: 4,
-      tension: 60,
-      useNativeDriver: true,
-    }).start();
-
   const isDisabled = disabled || loading;
 
   const content = (
@@ -91,20 +82,21 @@ export function PrimaryButton({
   );
 
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
-      onPressIn={pressIn}
-      onPressOut={pressOut}
       disabled={isDisabled}
+      pressedScale={0.965}
+      haptic="light"
+      style={[
+        styles.base,
+        // Layered shadow lives on the outer (non-clipped) wrapper; the inner
+        // surface clips the gradient to the pill radius.
+        !isDisabled && variant !== 'outline' && { boxShadow: elevationShadows.floating },
+        { opacity: isDisabled ? 0.55 : 1 },
+        style,
+      ]}
     >
-      <Animated.View
-        style={[
-          styles.base,
-          shadows.card,
-          { transform: [{ scale }], opacity: isDisabled ? 0.6 : 1 },
-          style,
-        ]}
-      >
+      <View style={styles.surface}>
         {variant === 'gradient' && (
           <LinearGradient
             colors={[colors.ctaTop, colors.ctaBottom]}
@@ -123,7 +115,7 @@ export function PrimaryButton({
             style={[
               styles.fill,
               {
-                backgroundColor: withAlpha(accent, 0x22),
+                backgroundColor: withAlpha(accent, 0x14),
                 borderWidth: 1.5,
                 borderColor: accent,
               },
@@ -132,14 +124,18 @@ export function PrimaryButton({
             {content}
           </View>
         )}
-      </Animated.View>
-    </Pressable>
+      </View>
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
   base: {
     height: 58,
+    borderRadius: radius.lg,
+  },
+  surface: {
+    flex: 1,
     borderRadius: radius.lg,
     overflow: 'hidden',
   },
@@ -151,7 +147,7 @@ const styles = StyleSheet.create({
   },
   gradientBorder: {
     borderWidth: 1,
-    borderColor: withAlpha(colors.white, 0x14),
+    borderColor: withAlpha(colors.white, 0x1f),
   },
   contentRow: {
     flexDirection: 'row',
@@ -162,8 +158,8 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   label: {
+    fontFamily: fonts.bold,
     fontSize: 17,
-    fontWeight: typography.weightBold,
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
 });

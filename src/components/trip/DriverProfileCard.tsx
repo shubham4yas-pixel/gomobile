@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { DriverProfile } from '@/lib/driverProfile';
-import { colors, radius, shadows, typography, withAlpha } from '@/theme/theme';
+import { colors, radius, shadows, withAlpha, fonts } from '@/theme/theme';
 
 interface DriverProfileCardProps {
   profile: DriverProfile;
@@ -34,7 +35,10 @@ export function DriverProfileCard({
         <View style={styles.identity}>
           <Text style={styles.name}>{profile.name}</Text>
           <View style={styles.metaRow}>
-            <Text style={styles.rating}>★ {profile.rating}</Text>
+            <View style={styles.ratingWrap}>
+              <Ionicons name="star" size={12} color={colors.warning} />
+              <Text style={styles.rating}>{profile.rating}</Text>
+            </View>
             <Text style={styles.metaDot}>·</Text>
             <Text style={styles.trips}>{profile.trips.toLocaleString()} trips</Text>
           </View>
@@ -51,7 +55,7 @@ export function DriverProfileCard({
 
       <View style={styles.vehicleRow}>
         <View style={styles.vehicleIconWrap}>
-          <Text style={styles.vehicleIcon}>🚗</Text>
+          <Ionicons name="car-sport-outline" size={22} color={accent} />
         </View>
         <View style={styles.vehicleInfo}>
           <Text style={styles.vehicleName}>
@@ -91,7 +95,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontSize: 20,
-    fontWeight: typography.weightHeavy,
+    fontFamily: fonts.heavy,
   },
   identity: {
     flex: 1,
@@ -99,7 +103,7 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 18,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
     color: colors.textPrimary,
   },
   metaRow: {
@@ -107,10 +111,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  ratingWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
   rating: {
     fontSize: 13,
-    fontWeight: typography.weightBold,
-    color: colors.warning,
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
   },
   metaDot: {
     color: colors.textMuted,
@@ -129,7 +138,7 @@ const styles = StyleSheet.create({
   },
   etaText: {
     fontSize: 13,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
   },
   divider: {
     height: 1,
@@ -148,15 +157,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  vehicleIcon: {
-    fontSize: 22,
-  },
   vehicleInfo: {
     flex: 1,
   },
   vehicleName: {
     fontSize: 15,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
     color: colors.textPrimary,
   },
   vehicleSub: {
@@ -172,7 +178,7 @@ const styles = StyleSheet.create({
   },
   plateText: {
     fontSize: 14,
-    fontWeight: typography.weightHeavy,
+    fontFamily: fonts.heavy,
     color: colors.black,
     letterSpacing: 1,
   },

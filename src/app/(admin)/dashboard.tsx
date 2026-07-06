@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '@/components/MapView';
 import { useAdminStore, AdminTrip } from '@/store/useAdminStore';
 import { connectSocket, disconnectSocket, onAdminSync, getSocket } from '@/services/socketService';
-import { colors, radius, spacing, typography, withAlpha } from '@/theme/theme';
+import { colors, radius, spacing, withAlpha, fonts } from '@/theme/theme';
 
 const DEFAULT_REGION = {
   latitude: 37.7749,
@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
   mapBadgeText: {
     color: colors.textPrimary,
     fontSize: 12,
-    fontWeight: typography.weightHeavy,
+    fontFamily: fonts.heavy,
     letterSpacing: 1.5,
   },
   recenterBtn: {
@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
   recenterText: {
     color: colors.textPrimary,
     fontSize: 13,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
   },
 
   // Markers
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
   },
   headerKicker: {
     fontSize: 12,
-    fontWeight: typography.weightHeavy,
+    fontFamily: fonts.heavy,
     letterSpacing: 2,
     color: colors.textMuted,
   },
@@ -387,10 +387,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   liveDot: { width: 8, height: 8, borderRadius: 4 },
-  connText: { fontSize: 12, fontWeight: typography.weightHeavy, letterSpacing: 1 },
+  connText: { fontSize: 12, fontFamily: fonts.heavy, letterSpacing: 1 },
   headerTitle: {
     fontSize: 26,
-    fontWeight: typography.weightHeavy,
+    fontFamily: fonts.heavy,
     color: colors.textPrimary,
   },
   statRow: {
@@ -407,14 +407,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.hairline,
   },
-  statValue: { fontSize: 18, fontWeight: typography.weightHeavy },
+  statValue: { fontSize: 18, fontFamily: fonts.heavy },
   statLabel: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
 
   consoleBody: { flex: 1 },
   consoleBodyContent: { padding: spacing.xl },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: typography.weightHeavy,
+    fontFamily: fonts.heavy,
     letterSpacing: 2,
     color: colors.textSecondary,
     marginBottom: spacing.md,
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cardDot: { width: 10, height: 10, borderRadius: 5 },
-  cardTitle: { fontSize: 15, fontWeight: typography.weightBold, color: colors.textPrimary },
+  cardTitle: { fontSize: 15, fontFamily: fonts.bold, color: colors.textPrimary },
   cardSub: { fontSize: 12, color: colors.textSecondary, marginTop: 3 },
   pill: {
     paddingHorizontal: 10,
@@ -447,7 +447,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: 1,
   },
-  pillText: { fontSize: 11, fontWeight: typography.weightHeavy, letterSpacing: 0.5 },
+  pillText: { fontSize: 11, fontFamily: fonts.heavy, letterSpacing: 0.5 },
 
   empty: {
     padding: 18,

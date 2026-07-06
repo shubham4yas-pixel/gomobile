@@ -1,45 +1,44 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@/theme/theme';
-import { haptics } from '@/lib/haptics';
+import { PressableScale } from '@/components/ui/PressableScale';
 
 interface StarRatingProps {
   value: number;
   onChange: (rating: number) => void;
   /** Star glyph size in px. */
   size?: number;
-  /** Fill color for selected stars. */
+  /** Fill color for selected stars. Defaults to the premium gold accent. */
   color?: string;
 }
 
 const STARS = [1, 2, 3, 4, 5];
 
 /**
- * Interactive 5-star rating row (Phase 9).
+ * Interactive 5-star rating row (Phase 9; gold + spring pop in Phase 18).
  *
- * Tapping a star selects that value (and everything below it). A light
- * selection haptic fires per tap to match the app's tactile feedback.
+ * Tapping a star selects that value (and everything below it). Each star is a
+ * PressableScale with a deep pressed scale, so the tap has a satisfying pop,
+ * plus the shared selection haptic.
  */
 export function StarRating({
   value,
   onChange,
   size = 40,
-  color = colors.warning,
+  color = colors.gold,
 }: StarRatingProps) {
   return (
     <View style={styles.row}>
       {STARS.map((star) => {
         const filled = star <= value;
         return (
-          <Pressable
+          <PressableScale
             key={star}
             hitSlop={6}
             style={styles.star}
-            onPress={() => {
-              haptics.selection();
-              onChange(star);
-            }}
-            accessibilityRole="button"
+            pressedScale={0.78}
+            haptic="selection"
+            onPress={() => onChange(star)}
             accessibilityLabel={`Rate ${star} star${star > 1 ? 's' : ''}`}
           >
             <Ionicons
@@ -47,7 +46,7 @@ export function StarRating({
               size={size}
               color={filled ? color : colors.hairlineStrong}
             />
-          </Pressable>
+          </PressableScale>
         );
       })}
     </View>

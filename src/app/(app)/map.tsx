@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   View,
@@ -8,11 +9,19 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import Reanimated, { FadeInDown } from 'react-native-reanimated';
+import Reanimated, {
+  FadeInDown,
+  useSharedValue,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
 import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, {
   Marker,
@@ -23,12 +32,22 @@ import MapView, {
 import { GOOGLE_MAPS_API_KEY } from '@/config/maps';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useLocationStore } from '@/store/useLocationStore';
-import { useRideStore, RideStatus, LocatedPlace, BookingFor } from '@/store/useRideStore';
-import { colors, radius, withAlpha, shadows } from '@/theme/theme';
+import {
+  useRideStore,
+  RideStatus,
+  LocatedPlace,
+  BookingFor,
+  TripSummary,
+} from '@/store/useRideStore';
+import { colors, radius, withAlpha, fonts, elevationShadows } from '@/theme/theme';
+import { GlassCard } from '@/components/ui/GlassCard';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { LIGHT_MAP_STYLE } from '@/config/mapStyle';
 import { haptics } from '@/lib/haptics';
 import { RiderBottomSheet } from '@/components/sheets/RiderBottomSheet';
 import { DriverBottomSheet } from '@/components/sheets/DriverBottomSheet';
+import { SocketDiagnostics } from '@/components/trip/SocketDiagnostics';
+import { LocationMarker, DriverMarker } from '@/components/trip/MemoizedMarkers';
 import { useAnimatedCoordinate } from '@/hooks/useAnimatedCoordinate';
 import { usePaymentSheet } from '@/hooks/usePaymentSheet';
 import { isValidPhone, normalizePhone } from '@/components/ui/PhoneInput';
@@ -38,10 +57,10 @@ import {
   watchPosition,
 } from '@/services/locationService';
 import { reverseGeocode } from '@/services/geocoding';
-import { registerForPushNotifications, addForegroundListener } from '@/services/pushService';
+import { registerForPushNotifications, addForegroundListener, savePushTokenToFirestore } from '@/services/pushService';
+import { notificationService } from '@/services/notificationService';
 import {
   connectSocket,
-  disconnectSocket,
   emitLocation,
   emitTripRequest,
   emitTripCancel,
@@ -50,8 +69,11 @@ import {
   emitTripStatusUpdate,
   emitSubmitRating,
   emitRegisterPushToken,
+  emitRegisterFcmToken,
   onTripEvent,
+  getSocketUrl,
 } from '@/services/socketService';
+import { getFcmToken, addFcmForegroundListener } from '@/services/fcmService';
 
 /** Default region fallback (San Francisco) when GPS is unavailable */
 const DEFAULT_REGION = {
@@ -66,7 +88,14 @@ const DEFAULT_REGION = {
 const BASE_FARE = 3.0;
 const PER_KM_RATE = 1.5;
 
+// TEMPORARY diagnostics overlay (device-to-device visibility debugging). Shows
+// live GPS, socket-connection status, the backend URL, and the driver count.
+// Flip to false (or delete the <DebugOverlay/>) once the issue is resolved.
+const SHOW_DEBUG = false;
+
 type Coord = { latitude: number; longitude: number };
+
+export type VerificationState = 'WAITING_FOR_PASSENGER' | 'PASSENGER_APPROACHING' | 'PASSENGER_READY' | 'OTP_PENDING' | 'OTP_VERIFIED' | 'READY_TO_START';
 
 /**
  * Map Screen
@@ -124,23 +153,69 @@ export default function MapScreen() {
   // Driver-side: whether the active trip is a third-party booking (Phase 12).
   const [counterpartyIsThirdParty, setCounterpartyIsThirdParty] = useState(false);
 
+  // Arrival & Verification Workflow States
+  const [arrivedAt, setArrivedAt] = useState<number | null>(null);
+  const [verificationState, setVerificationState] = useState<VerificationState>('WAITING_FOR_PASSENGER');
+  const [verificationCode, setVerificationCode] = useState<string | null>(null);
+  const [otpError, setOtpError] = useState<string | null>(null);
+
+  // Active Trip Progress States
+  const [tripProgress, setTripProgress] = useState<number>(0);
+  const [remainingDistanceKm, setRemainingDistanceKm] = useState<number | null>(null);
+  const [remainingDurationMin, setRemainingDurationMin] = useState<number | null>(null);
+  const [tripSummary, setTripSummary] = useState<TripSummary | null>(null);
+
   // Phase 13: native payment sheet + in-flight authorization flag.
   const { pay } = usePaymentSheet();
   const [authorizingPayment, setAuthorizingPayment] = useState(false);
 
+  // Debug: live socket-connection status for the diagnostics overlay.
+  const [socketConnected, setSocketConnected] = useState(false);
   const router = useRouter();
 
   const mapRef = useRef<MapView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const sheetRef = useRef<BottomSheet>(null);
+  const errorTimeoutRef = useRef<any>(null);
+
+  const setSafeErrorMessage = useCallback((msg: string | null, autoClearMs?: number) => {
+    setErrorMessage(msg);
+    if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
+    if (msg && autoClearMs) {
+      errorTimeoutRef.current = setTimeout(() => setErrorMessage(null), autoClearMs);
+    }
+  }, [setErrorMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
+    };
+  }, []);
+
+  // Sheet position (Y of the sheet top, in px from screen top) drives the
+  // map blur/dim overlay (Phase 15): the higher the sheet rises, the more the
+  // map recedes. A continuous mapping that works with `enableDynamicSizing`.
+  const { height: windowHeight } = useWindowDimensions();
+  const sheetPosition = useSharedValue(windowHeight);
+  const dimStyle = useAnimatedStyle(() => ({
+    // Fully clear when the sheet sits low (a small peek); ramps to a soft
+    // dim as the sheet covers the upper half of the screen.
+    opacity: interpolate(
+      sheetPosition.value,
+      [windowHeight * 0.4, windowHeight * 0.72],
+      [1, 0],
+      Extrapolation.CLAMP
+    ),
+  }));
   const userIdRef = useRef<string>(''); // the userId used for the live socket (for rating submit)
   // Driver: first pickup→dropoff driving metrics captured at ride start (Phase 11).
   const drivenRouteRef = useRef<{ distanceKm: number; durationMin: number } | null>(null);
   const [directionsFailed, setDirectionsFailed] = useState(false);
 
   const accentColor = role === 'rider' ? colors.rider : colors.driver;
-  const roleEmoji = role === 'rider' ? '🚘' : '🛣️';
+  const roleIcon = role === 'rider' ? 'navigate-outline' : 'car-sport-outline';
   const roleLabel = role ?? 'User';
+  const sheetSnapPoints = useMemo(() => ['32%', '64%', '92%'], []);
 
   // ─── Location Init ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -191,7 +266,7 @@ export default function MapScreen() {
         try {
           subscription.remove();
         } catch (e) {
-          console.warn('Could not remove location subscription:', e);
+          logger.warn('Could not remove location subscription:', e);
         }
       }
     };
@@ -209,11 +284,42 @@ export default function MapScreen() {
     return () => pulse.stop();
   }, [pulseAnim]);
 
-  // ─── Socket Connection + Trip Event Listeners ───────────────────────────
+  // ─── Socket Connection Lifecycle ─────────────────────────────────────────
   useEffect(() => {
     const userId = useAuthStore.getState().user?.uid || `dev-${role}-${Date.now()}`;
     const phone = useAuthStore.getState().phone;
     userIdRef.current = userId;
+
+    // Connects or reuses the existing socket for this user
+    const socket = connectSocket(role || 'rider', userId, phone);
+
+    // Diagnostic state updates
+    setSocketConnected(socket.connected);
+    const onConnect = () => setSocketConnected(true);
+    const onDisconnect = () => setSocketConnected(false);
+    const onConnectError = () => setSocketConnected(false);
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onConnectError);
+
+    // We do NOT disconnect the socket here on cleanup.
+    // The socket lives as long as the app/auth state remains the same.
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onConnectError);
+    };
+  }, [role]); // Only re-run if role changes
+
+  // ─── Trip Event Listeners ───────────────────────────────────────────────
+  useEffect(() => {
+    const userId = userIdRef.current;
+    if (!userId) return;
+
+    // Since connectSocket returns the existing socket if already connected,
+    // this is safe to call and guarantees we have the instance to attach listeners to.
+    const phone = useAuthStore.getState().phone;
     const socket = connectSocket(role || 'rider', userId, phone);
 
     if (role === 'rider') {
@@ -228,14 +334,55 @@ export default function MapScreen() {
       if (token) {
         if (socket.connected) emitRegisterPushToken(token);
         else socket.once('connect', () => emitRegisterPushToken(token));
+        // Belt-and-suspenders: persist to Firestore via client SDK (Phase 15).
+        savePushTokenToFirestore(userId, token);
+      }
+
+      // Register the native FCM token too (Phase 15) — it carries the data-only
+      // ETA messages that drive the live notification while backgrounded/quit.
+      const fcmToken = await getFcmToken();
+      if (fcmToken) {
+        if (socket.connected) emitRegisterFcmToken(fcmToken);
+        else socket.once('connect', () => emitRegisterFcmToken(fcmToken));
       }
     })();
     // Surface foreground pushes (the OS shows them, but log for debugging).
     pushUnsub = addForegroundListener((n) =>
-      console.log('[Push] Foreground notification:', n.request.content.title)
+      logger.debug('[Push] Foreground notification:', n.request.content.title)
     );
+    // Foreground FCM data messages → update the live ETA notification in place
+    // (idempotent with the socket path; both reuse the tripId notification id).
+    const fcmForegroundUnsub = role === 'rider' ? addFcmForegroundListener() : null;
 
     const unsubs: (() => void)[] = [];
+
+    // ── Reconnect resync (Phase 16) ───────────────────────────────────────
+    // After a drop, the server re-attaches this socket to any in-flight trip
+    // (matched by verified userId) and replays its state — restore the UI.
+    unsubs.push(
+      onTripEvent('trip:resync', (data) => {
+        setTripId(data.tripId);
+        setTripRoute(data.pickup, data.dropoff);
+        setTripStatus(data.status as RideStatus);
+        setPendingOffer(null);
+        if (data.driver) setAssignedDriver(data.driver);
+        setCounterpartyPhone(data.counterpartyPhone ?? null);
+        setCounterpartyIsThirdParty(!!data.isThirdParty);
+        logger.debug(`[Socket] Resynced to trip ${data.tripId} (${data.status})`);
+      })
+    );
+
+    // Rider-side heads-up while the driver's connection drops mid-trip; the
+    // server auto-cancels if they don't return within the grace window.
+    unsubs.push(
+      onTripEvent('trip:driver-connection', (data) => {
+        if (data.state === 'lost') {
+          setErrorMessage('Driver connection lost — hang tight, reconnecting…');
+        } else {
+          setErrorMessage(null);
+        }
+      })
+    );
 
     // ── Rider events ──────────────────────────────────────────────────────
     unsubs.push(
@@ -266,6 +413,8 @@ export default function MapScreen() {
           haptics.light();
           setTripStatus(data.status as RideStatus);
         }
+        // Live/tray notifications for these transitions are handled by the
+        // notification layer (Phase 20) — it observes this same store change.
       })
     );
 
@@ -279,13 +428,14 @@ export default function MapScreen() {
     unsubs.push(
       onTripEvent('trip:no-drivers', () => {
         resetTrip();
-        setErrorMessage('No drivers available nearby. Please try again.');
-        setTimeout(() => setErrorMessage(null), 4000);
+        setSafeErrorMessage('No drivers available nearby. Please try again.', 4000);
       })
     );
 
     unsubs.push(
       onTripEvent('trip:cancelled', () => {
+        // Notification cleanup happens in the notification layer (Phase 20),
+        // which watches the ACTIVE → IDLE transition this reset triggers.
         resetTrip();
       })
     );
@@ -323,15 +473,15 @@ export default function MapScreen() {
 
     unsubs.push(
       onTripEvent('trip:error', (data) => {
-        setErrorMessage(data.message);
-        setTimeout(() => setErrorMessage(null), 4000);
+        setSafeErrorMessage(data.message, 4000);
       })
     );
 
     return () => {
       unsubs.forEach((fn) => fn());
       if (pushUnsub) pushUnsub();
-      disconnectSocket();
+      if (fcmForegroundUnsub) fcmForegroundUnsub();
+      // DO NOT call disconnectSocket() here to prevent socket churn on state updates.
     };
   }, [
     role,
@@ -345,14 +495,17 @@ export default function MapScreen() {
     setErrorMessage,
     setCounterpartyPhone,
     resetTrip,
+    setSafeErrorMessage,
   ]);
 
   // ─── Driver GPS Emit ────────────────────────────────────────────────────
   useEffect(() => {
     if (role !== 'driver') return;
 
-    if (userLocation) {
-      emitLocation(userLocation.latitude, userLocation.longitude);
+    // Emit initial location immediately if available
+    const initialLoc = useLocationStore.getState().userLocation;
+    if (initialLoc) {
+      emitLocation(initialLoc.latitude, initialLoc.longitude);
     }
 
     const interval = setInterval(() => {
@@ -361,7 +514,7 @@ export default function MapScreen() {
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [userLocation, role]);
+  }, [role]);
 
   // ─── Rider: Follow-mode (re-center on GPS while idle, no dropoff) ─────────
   useEffect(() => {
@@ -439,8 +592,32 @@ export default function MapScreen() {
       setDirectionsFailed(false);
       drivenRouteRef.current = null;
       setCounterpartyIsThirdParty(false);
+      setArrivedAt(null);
+      setVerificationState('WAITING_FOR_PASSENGER');
+      setVerificationCode(null);
+      setOtpError(null);
+      setTripProgress(0);
+      setRemainingDistanceKm(null);
+      setRemainingDurationMin(null);
+      setTripSummary(null);
     }
-  }, [tripStatus]);
+
+    // Initialize tracking metrics when trip starts
+    if (tripStatus === 'IN_PROGRESS' && routeInfo) {
+      setTripProgress(10); // Example initial progress
+      setRemainingDistanceKm(routeInfo.distanceKm);
+      setRemainingDurationMin(routeInfo.durationMin);
+
+      const estFare = routeInfo.distanceKm * 2.5 + 5; // Basic mockup
+      setTripSummary({
+        distanceKm: routeInfo.distanceKm,
+        durationMin: routeInfo.durationMin,
+        estimatedFare: estFare,
+        estimatedEarnings: estFare * 0.75,
+        currency: '$',
+      });
+    }
+  }, [tripStatus, routeInfo]);
 
   // ─── Trip Actions ───────────────────────────────────────────────────────
   const handleOpenMap = useCallback(() => {
@@ -449,8 +626,9 @@ export default function MapScreen() {
 
   const handleOpenHistory = useCallback(() => {
     haptics.selection();
-    router.push('/history');
-  }, [router]);
+    // Riders see their trip history; drivers get their earnings dashboard (Phase 14).
+    router.push(role === 'driver' ? '/earnings' : '/history');
+  }, [router, role]);
 
   // Rider picked a Places result → review route + fare before requesting.
   const handleSelectDestination = useCallback(
@@ -525,7 +703,7 @@ export default function MapScreen() {
 
   // Lift the sheet above the keyboard so the autocomplete results stay visible.
   const handleFocusSearch = useCallback(() => {
-    sheetRef.current?.expand();
+    sheetRef.current?.snapToIndex(2);
   }, []);
 
   // Back out of confirming → clear only the dropoff and return to idle search.
@@ -544,16 +722,25 @@ export default function MapScreen() {
 
     // A third-party booking must carry a valid passenger phone number.
     if (bookingFor.isThirdParty && !isValidPhone(bookingFor.riderPhoneNumber ?? '')) {
-      setErrorMessage("Enter the rider's phone number, or turn off third-party booking.");
-      setTimeout(() => setErrorMessage(null), 4000);
+      setSafeErrorMessage("Enter the rider's phone number, or turn off third-party booking.", 4000);
       return;
     }
 
     // Convert the LocatedPlace display objects to the {lat,lng} socket wire format.
+    // Carry the formatted addresses too (Phase 14) so the persisted trip can show
+    // a readable "from → to" in the rider's ride history.
     const pickup = pickupLocation
-      ? { lat: pickupLocation.latitude, lng: pickupLocation.longitude }
-      : { lat: userLocation.latitude, lng: userLocation.longitude };
-    const dropoff = { lat: dropoffLocation.latitude, lng: dropoffLocation.longitude };
+      ? {
+          lat: pickupLocation.latitude,
+          lng: pickupLocation.longitude,
+          address: pickupLocation.formattedAddress ?? null,
+        }
+      : { lat: userLocation.latitude, lng: userLocation.longitude, address: null };
+    const dropoff = {
+      lat: dropoffLocation.latitude,
+      lng: dropoffLocation.longitude,
+      address: dropoffLocation.formattedAddress ?? null,
+    };
     const normalizedBooking: BookingFor = bookingFor.isThirdParty
       ? { isThirdParty: true, riderPhoneNumber: normalizePhone(bookingFor.riderPhoneNumber ?? '') }
       : { isThirdParty: false, riderPhoneNumber: null };
@@ -563,28 +750,26 @@ export default function MapScreen() {
       ? Math.round((BASE_FARE + routeInfo.distanceKm * PER_KM_RATE) * 100) / 100
       : BASE_FARE;
 
-    // ── DEV BYPASS: skip Razorpay payment for testing ──────────────────
-    // TODO: Remove this bypass and restore the real pay() call before production.
-    // setAuthorizingPayment(true);
-    // const result = await pay({
-    //   amount: fareEstimate,
-    //   currency: 'USD',
-    //   userId: userIdRef.current,
-    //   description: 'RideShare fare authorization',
-    //   contact: useAuthStore.getState().phone,
-    // });
-    // setAuthorizingPayment(false);
-    //
-    // if (!result.ok) {
-    //   haptics.heavy();
-    //   setErrorMessage(
-    //     'Payment authorization failed. Please update your payment method to request a ride.'
-    //   );
-    //   setTimeout(() => setErrorMessage(null), 6000);
-    //   return;
-    // }
-    const result = { ok: true, payment: { id: 'dev_bypass', amount: fareEstimate, currency: 'USD' } };
-    // ── END DEV BYPASS ───────────────────────────────────────────────────
+    // ── DEV BYPASS REMOVED: Restore actual pay() invocation ──────────────
+    setAuthorizingPayment(true);
+    const result = await pay({
+      amount: fareEstimate,
+      currency: 'USD',
+      userId: userIdRef.current,
+      description: 'RideShare fare authorization',
+      contact: useAuthStore.getState().phone,
+    });
+    setAuthorizingPayment(false);
+
+    if (!result.ok) {
+      haptics.heavy();
+      setSafeErrorMessage(
+        'Payment authorization failed. Please update your payment method to request a ride.',
+        6000
+      );
+      return;
+    }
+    // ── END DEV BYPASS REMOVAL ───────────────────────────────────────────
 
     haptics.medium();
     setTripRoute(pickup, dropoff);
@@ -593,7 +778,7 @@ export default function MapScreen() {
       dropoff,
       routeInfo ? { distanceKm: routeInfo.distanceKm, durationMin: routeInfo.durationMin } : undefined,
       normalizedBooking,
-      result.payment ?? undefined
+      { orderId: result.payment?.orderId ?? null, paymentId: result.payment?.paymentId ?? 'bypass' }
     );
     setTripStatus('SEARCHING');
   }, [
@@ -606,7 +791,7 @@ export default function MapScreen() {
     pay,
     setTripRoute,
     setTripStatus,
-    setErrorMessage,
+    setSafeErrorMessage,
   ]);
 
   const handleCancelSearch = useCallback(() => {
@@ -647,6 +832,9 @@ export default function MapScreen() {
     };
     const next = nextStatus[tripStatus];
     if (next) {
+      if (next === 'ARRIVED') {
+        setArrivedAt(Date.now());
+      }
       if (next === 'COMPLETED') {
         haptics.success();
         // Send the real driving distance/duration captured from Directions so the
@@ -663,6 +851,48 @@ export default function MapScreen() {
     }
   }, [tripId, tripStatus, setTripStatus]);
 
+  // Handle Rider clicking "I'm coming"
+  const handleAcknowledgeArrival = useCallback(() => {
+    haptics.medium();
+    setVerificationState('PASSENGER_APPROACHING');
+  }, []);
+
+  // Handle Rider clicking "I'm at the vehicle"
+  const handlePassengerAtVehicle = useCallback(() => {
+    haptics.medium();
+    setVerificationState('PASSENGER_READY');
+    // Simulate backend generating an OTP when passenger arrives
+    setTimeout(() => {
+      setVerificationCode('4829');
+      // Ride event → notification layer (Phase 20): surface the fresh PIN.
+      const { rideId } = useRideStore.getState();
+      if (rideId) {
+        notificationService.emit({ type: 'OTP_READY', tripId: rideId, role: 'rider', otp: '4829' });
+      }
+    }, 1500);
+  }, []);
+
+  // Handle Driver tapping "Verify Passenger"
+  const handleDriverEnterOTP = useCallback(() => {
+    haptics.light();
+    setVerificationState('OTP_PENDING');
+  }, []);
+
+  // Handle Driver verifying the PIN
+  const handleVerifyOTP = useCallback((code: string) => {
+    if (code === '4829') {
+      haptics.success();
+      setOtpError(null);
+      setVerificationState('OTP_VERIFIED');
+      setTimeout(() => {
+        setVerificationState('READY_TO_START');
+      }, 1500);
+    } else {
+      haptics.error();
+      setOtpError('Invalid code');
+    }
+  }, []);
+
   // Submit the post-trip rating, then fully reset back to idle (Phase 9).
   const handleSubmitRating = useCallback(
     (rating: number) => {
@@ -677,10 +907,10 @@ export default function MapScreen() {
     await logout();
   }, [logout]);
 
-  const openSettings = () => {
+  const openSettings = useCallback(() => {
     if (Platform.OS === 'ios') Linking.openURL('app-settings:');
     else Linking.openSettings();
-  };
+  }, []);
 
   // ─── Route geometry ───────────────────────────────────────────────────────
   const liveDriver = useMemo(() => {
@@ -763,11 +993,38 @@ export default function MapScreen() {
 
   const isTracking = useLocationStore((s) => s.isTracking);
 
+  const handleDirectionsReady = useCallback((result: any) => {
+    if (result?.coordinates) fitToRoute(result.coordinates);
+    const distanceKm = Math.round((result?.distance ?? 0) * 100) / 100;
+    const durationMin = Math.max(1, Math.round(result?.duration ?? 0));
+
+    if ((riderConfirming || inRouteState) && distanceKm > 0) {
+      setRouteInfo({ distanceKm, durationMin });
+    }
+
+    if (
+      role === 'driver' &&
+      tripStatus === 'IN_PROGRESS' &&
+      !drivenRouteRef.current &&
+      distanceKm > 0
+    ) {
+      drivenRouteRef.current = { distanceKm, durationMin };
+    }
+  }, [fitToRoute, riderConfirming, inRouteState, role, tripStatus, setRouteInfo]);
+
+  const handleDirectionsError = useCallback(() => {
+    setDirectionsFailed(true);
+    if (routeOrigin && routeDestination) {
+      fitToRoute([routeOrigin, routeDestination]);
+    }
+  }, [routeOrigin, routeDestination, fitToRoute]);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // ═══ RENDER ════════════════════════════════════════════════════════════════
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <View style={styles.container}>
+      <SocketDiagnostics />
       {/* Full-screen Map */}
       <MapView
         ref={mapRef}
@@ -808,86 +1065,61 @@ export default function MapScreen() {
         {role === 'rider' &&
           pickupLocation &&
           (tripStatus === 'IDLE' || tripStatus === 'CONFIRMING') && (
-            <Marker
+            <LocationMarker
               coordinate={{
                 latitude: pickupLocation.latitude,
                 longitude: pickupLocation.longitude,
               }}
-              anchor={{ x: 0.5, y: 1 }}
+              address={pickupLocation.formattedAddress}
+              type="pickup"
               draggable={tripStatus === 'IDLE'}
               onDragEnd={(e: any) => handlePickupDragEnd(e.nativeEvent.coordinate)}
-            >
-              <View style={styles.pinWrap}>
-                <View style={[styles.pin, { backgroundColor: colors.rider }]}>
-                  <Text style={styles.pinGlyph}>👤</Text>
-                </View>
-                <View style={[styles.pinStem, { backgroundColor: colors.rider }]} />
-              </View>
-            </Marker>
+            />
           )}
 
         {/* Nearby Drivers (Rider Only) */}
         {role === 'rider' &&
           nearbyDrivers.map((driver) => {
             const isAssigned = assignedDriver?.id === driver.id;
-            // The assigned driver glides via the interpolation hook (Phase 12);
-            // unmatched drivers plot at their raw broadcast position.
             const coordinate =
               isAssigned && animatedDriverCoord
                 ? animatedDriverCoord
                 : { latitude: driver.lat, longitude: driver.lng };
             return (
-              <Marker
+              <DriverMarker
                 key={driver.id}
+                id={driver.id}
                 coordinate={coordinate}
-                anchor={{ x: 0.5, y: 0.5 }}
-              >
-                <View style={styles.driverMarkerContainer}>
-                  <View style={[styles.driverMarkerDot, isAssigned && styles.driverMarkerAssigned]}>
-                    <Text style={styles.driverMarkerEmoji}>🚗</Text>
-                  </View>
-                </View>
-              </Marker>
+                isAssigned={isAssigned}
+              />
             );
           })}
 
         {/* Pickup Marker (driver) */}
         {showPickupMarker && tripPickup && (
-          <Marker coordinate={{ latitude: tripPickup.lat, longitude: tripPickup.lng }} anchor={{ x: 0.5, y: 1 }}>
-            <View style={styles.pinWrap}>
-              <View style={[styles.pin, { backgroundColor: colors.rider }]}>
-                <Text style={styles.pinGlyph}>👤</Text>
-              </View>
-              <View style={[styles.pinStem, { backgroundColor: colors.rider }]} />
-            </View>
-          </Marker>
+          <LocationMarker
+            coordinate={{ latitude: tripPickup.lat, longitude: tripPickup.lng }}
+            address={tripPickup.address}
+            type="pickup"
+          />
         )}
 
         {/* Dropoff Marker */}
         {showDropoffMarker && tripDropoff && (
-          <Marker coordinate={{ latitude: tripDropoff.lat, longitude: tripDropoff.lng }} anchor={{ x: 0.5, y: 1 }}>
-            <View style={styles.pinWrap}>
-              <View style={[styles.pin, { backgroundColor: colors.success }]}>
-                <Text style={styles.pinGlyph}>🏁</Text>
-              </View>
-              <View style={[styles.pinStem, { backgroundColor: colors.success }]} />
-            </View>
-          </Marker>
+          <LocationMarker
+            coordinate={{ latitude: tripDropoff.lat, longitude: tripDropoff.lng }}
+            address={tripDropoff.address}
+            type="dropoff"
+          />
         )}
 
         {/* Chosen dropoff preview (rider, confirming) */}
         {showConfirmDropoff && dropoffLocation && (
-          <Marker
+          <LocationMarker
             coordinate={{ latitude: dropoffLocation.latitude, longitude: dropoffLocation.longitude }}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <View style={styles.pinWrap}>
-              <View style={[styles.pin, { backgroundColor: colors.rider }]}>
-                <Text style={styles.pinGlyph}>🏁</Text>
-              </View>
-              <View style={[styles.pinStem, { backgroundColor: colors.rider }]} />
-            </View>
-          </Marker>
+            address={dropoffLocation.formattedAddress}
+            type="dropoff"
+          />
         )}
 
         {/* Route */}
@@ -896,7 +1128,7 @@ export default function MapScreen() {
             <Polyline
               coordinates={[routeOrigin, routeDestination]}
               strokeWidth={5}
-              strokeColor={accentColor}
+              strokeColor={colors.navy}
               lineDashPattern={[2, 6]}
             />
           ) : (
@@ -904,71 +1136,94 @@ export default function MapScreen() {
               origin={routeOrigin}
               destination={routeDestination}
               apikey={GOOGLE_MAPS_API_KEY}
-              strokeWidth={6}
-              strokeColor={accentColor}
-              onReady={(result: any) => {
-                // Guard against a malformed Directions payload (graceful degradation).
-                if (result?.coordinates) fitToRoute(result.coordinates);
-                const distanceKm = Math.round((result?.distance ?? 0) * 100) / 100;
-                const durationMin = Math.max(1, Math.round(result?.duration ?? 0));
-                // Rider reviewing → drive the fare estimate from the real route.
-                if (riderConfirming && distanceKm > 0) {
-                  setRouteInfo({ distanceKm, durationMin });
-                }
-                // Driver at ride start → capture the canonical trip distance once
-                // (driver ≈ pickup), passed to the server at completion for the fare.
-                if (
-                  role === 'driver' &&
-                  tripStatus === 'IN_PROGRESS' &&
-                  !drivenRouteRef.current &&
-                  distanceKm > 0
-                ) {
-                  drivenRouteRef.current = { distanceKm, durationMin };
-                }
-              }}
-              onError={() => {
-                setDirectionsFailed(true);
-                if (routeOrigin && routeDestination) {
-                  fitToRoute([routeOrigin, routeDestination]);
-                }
-              }}
+              strokeWidth={5}
+              strokeColor={colors.navy}
+              onReady={handleDirectionsReady}
+              onError={handleDirectionsError}
             />
           )
         )}
       </MapView>
 
-      {/* ═══ Top HUD: role badge + error toast ═══ */}
+      {/* ═══ Top HUD: frosted-glass role badge + error toast (Phase 18) ═══ */}
       <SafeAreaView style={styles.hudTop} pointerEvents="box-none" edges={['top']}>
-        <View style={[styles.roleBadge, { backgroundColor: withAlpha(colors.background, 0xcc) }]}>
-          <Text style={styles.badgeEmoji}>{roleEmoji}</Text>
-          <Text style={[styles.badgeText, { color: accentColor }]}>{roleLabel}</Text>
-        </View>
+        <GlassCard rounded={radius.pill} padding={0}>
+          <View style={styles.roleBadge}>
+            <Ionicons name={roleIcon} size={19} color={accentColor} />
+            <Text style={[styles.badgeText, { color: accentColor }]}>{roleLabel}</Text>
+          </View>
+        </GlassCard>
 
         {errorMessage && (
           <View style={styles.errorToast}>
-            <Text style={styles.errorToastText}>⚠️ {errorMessage}</Text>
+            <Ionicons name="alert-circle-outline" size={17} color={colors.danger} />
+            <Text style={styles.errorToastText}>{errorMessage}</Text>
           </View>
         )}
       </SafeAreaView>
 
-      {/* ═══ Idle History button (top-right, premium) ═══ */}
+      {/* ═══ TEMP Debug overlay — GPS + socket diagnostics ═══ */}
+      {SHOW_DEBUG && (
+        <View style={[styles.debugBox, { top: insets.top + 60 }]} pointerEvents="box-none">
+          <Text style={styles.debugTitle}>🐞 DEBUG · {String(role).toUpperCase()}</Text>
+          <Text style={styles.debugLine}>
+            Lat: {userLocation ? userLocation.latitude.toFixed(6) : '—'}
+          </Text>
+          <Text style={styles.debugLine}>
+            Lng: {userLocation ? userLocation.longitude.toFixed(6) : '—'}
+          </Text>
+          <Text style={[styles.debugLine, { color: socketConnected ? '#34D399' : '#F87171' }]}>
+            socket: {socketConnected ? '● CONNECTED' : '○ DISCONNECTED'}
+          </Text>
+          <Text style={styles.debugLine} numberOfLines={1}>
+            backend: {getSocketUrl().replace(/^https?:\/\//, '')}
+          </Text>
+          <Text style={styles.debugLine}>
+            drivers seen: {nearbyDrivers.length}
+          </Text>
+          {tripStatus === 'IN_PROGRESS' && tripProgress < 100 && (
+            <PressableScale
+              onPress={() => {
+                setTripProgress(100);
+                setRemainingDistanceKm(0);
+                setRemainingDurationMin(0);
+              }}
+              style={{ marginTop: 8, padding: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 4, alignItems: 'center' }}
+            >
+              <Text style={styles.debugLine}>Fast Forward ⏩</Text>
+            </PressableScale>
+          )}
+        </View>
+      )}
+
+      {/* ═══ Idle History button (top-right, frosted glass — Phase 18) ═══ */}
       {tripStatus === 'IDLE' && permissionStatus !== 'denied' && (
-        <Pressable
+        <PressableScale
           onPress={handleOpenHistory}
           style={[styles.historyBtn, { top: insets.top + 8 }]}
           hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="View ride history"
+          pressedScale={0.9}
+          accessibilityLabel={role === 'driver' ? 'View earnings dashboard' : 'View ride history'}
         >
-          <Ionicons name="time-outline" size={22} color={accentColor} />
-        </Pressable>
+          <GlassCard rounded={22} padding={0}>
+            <View style={styles.historyBtnInner}>
+              <Ionicons
+                name={role === 'driver' ? 'wallet-outline' : 'time-outline'}
+                size={22}
+                color={accentColor}
+              />
+            </View>
+          </GlassCard>
+        </PressableScale>
       )}
 
       {/* ═══ Permission Denied Overlay ═══ */}
       {permissionStatus === 'denied' && (
         <View style={styles.permissionOverlay} pointerEvents="box-none">
           <View style={styles.permissionCard}>
-            <Text style={styles.permissionIcon}>📍</Text>
+            <View style={styles.permissionIcon}>
+              <Ionicons name="location-outline" size={28} color={accentColor} />
+            </View>
             <Text style={styles.permissionTitle}>Location Access Required</Text>
             <Text style={styles.permissionMessage}>
               RideShare needs your location to show your position and match you with nearby rides.
@@ -980,16 +1235,34 @@ export default function MapScreen() {
         </View>
       )}
 
+      {/* ═══ Map dim/blur overlay — recedes the map as the sheet expands ═══ */}
+      {permissionStatus !== 'denied' && (
+        <Reanimated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.mapDim, dimStyle]}
+        >
+          {/* Optimization: only render BlurView when the sheet is expanded enough to cast a blur */}
+          {sheetPosition.value < windowHeight * 0.72 ? (
+            <BlurView intensity={18} tint="light" style={StyleSheet.absoluteFill} />
+          ) : null}
+        </Reanimated.View>
+      )}
+
       {/* ═══ Bottom Sheet ═══ */}
       {permissionStatus !== 'denied' && (
         <BottomSheet
           ref={sheetRef}
           index={0}
-          enableDynamicSizing
+          snapPoints={sheetSnapPoints}
+          animatedPosition={sheetPosition}
+          enableDynamicSizing={false}
+          enableOverDrag={false}
           enablePanDownToClose={false}
-          keyboardBehavior="interactive"
+          keyboardBehavior="extend"
           keyboardBlurBehavior="restore"
           android_keyboardInputMode="adjustResize"
+          topInset={insets.top + 8}
+          bottomInset={insets.bottom}
           handleIndicatorStyle={styles.sheetIndicator}
           backgroundStyle={styles.sheetBackground}
         >
@@ -1007,8 +1280,16 @@ export default function MapScreen() {
                 counterpartyPhone={counterpartyPhone}
                 authorizing={authorizingPayment}
                 nearbyCount={nearbyDrivers.length}
-                eta={tripStatus === 'ACCEPTED' ? 'On the way' : null}
+                eta={routeInfo?.durationMin ?? (tripStatus === 'ACCEPTED' ? 5 : null)}
                 receipt={receipt}
+                arrivedAt={arrivedAt}
+                verificationState={verificationState}
+                otp={verificationCode}
+                otpError={otpError}
+                tripProgress={tripProgress}
+                remainingDistanceKm={remainingDistanceKm}
+                remainingDurationMin={remainingDurationMin}
+                tripSummary={tripSummary}
                 onSelectDestination={handleSelectDestination}
                 onSelectPickup={handleSelectPickup}
                 onUseCurrentPickup={handleUseCurrentPickup}
@@ -1021,6 +1302,8 @@ export default function MapScreen() {
                 onCallCounterparty={handleCallCounterparty}
                 onCancelSearch={handleCancelSearch}
                 onCancelTrip={handleCancelTrip}
+                onAcknowledgeArrival={handleAcknowledgeArrival}
+                onPassengerAtVehicle={handlePassengerAtVehicle}
                 onSubmitRating={handleSubmitRating}
                 onSignOut={handleLogout}
               />
@@ -1031,10 +1314,20 @@ export default function MapScreen() {
                 receipt={receipt}
                 counterpartyPhone={counterpartyPhone}
                 isThirdParty={counterpartyIsThirdParty}
+                eta={routeInfo?.durationMin ?? null}
+                arrivedAt={arrivedAt}
+                verificationState={verificationState}
+                otpError={otpError}
+                tripProgress={tripProgress}
+                remainingDistanceKm={remainingDistanceKm}
+                remainingDurationMin={remainingDurationMin}
+                tripSummary={tripSummary}
                 onAccept={handleAcceptOffer}
                 onDecline={handleDeclineOffer}
                 onAdvanceStatus={handleDriverStatusUpdate}
                 onCallRider={handleCallCounterparty}
+                onEnterOTP={handleDriverEnterOTP}
+                onVerifyOTP={handleVerifyOTP}
                 onSubmitRating={handleSubmitRating}
                 onSignOut={handleLogout}
               />
@@ -1079,41 +1372,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: radius.lg,
     gap: 10,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    shadowColor: '#1B2B4B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
   },
-  badgeEmoji: { fontSize: 20 },
   badgeText: {
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: fonts.bold,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
 
-  // Idle History button (top-right)
+  // TEMP debug overlay
+  debugBox: {
+    position: 'absolute',
+    left: 12,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 2,
+    maxWidth: 240,
+    zIndex: 999,
+  },
+  debugTitle: {
+    color: '#FBBF24',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  debugLine: {
+    color: '#E5E7EB',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+
+  // Idle History button (top-right, frosted glass)
   historyBtn: {
     position: 'absolute',
     right: 16,
+  },
+  historyBtnInner: {
     width: 44,
     height: 44,
-    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: withAlpha(colors.surface, 0xf0),
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    ...shadows.card,
   },
 
   // Error Toast
   errorToast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginHorizontal: 20,
     backgroundColor: withAlpha(colors.danger, 0x33),
     borderRadius: radius.sm,
@@ -1123,9 +1433,10 @@ const styles = StyleSheet.create({
     borderColor: withAlpha(colors.danger, 0x66),
   },
   errorToastText: {
+    flex: 1,
     color: colors.danger,
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: fonts.semibold,
     textAlign: 'center',
   },
 
@@ -1145,6 +1456,10 @@ const styles = StyleSheet.create({
   sheetIndicator: {
     backgroundColor: colors.hairlineStrong,
     width: 44,
+  },
+  // Frosted scrim that fades the map as the sheet expands (premium focus).
+  mapDim: {
+    backgroundColor: withAlpha(colors.background, 0x59),
   },
 
   // User Marker
@@ -1168,27 +1483,47 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
 
-  // Driver Marker
+  // Driver Marker — navy car chip; the assigned car earns the gold ring (Phase 18)
   driverMarkerContainer: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   driverMarkerDot: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.driver,
+    backgroundColor: colors.navy,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.driver,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
+    shadowColor: colors.navy,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
     elevation: 6,
     borderWidth: 2,
-    borderColor: colors.background,
+    borderColor: colors.white,
   },
-  driverMarkerAssigned: { borderColor: colors.success, borderWidth: 3, shadowColor: colors.success },
-  driverMarkerEmoji: { fontSize: 16 },
+  driverMarkerAssigned: {
+    borderColor: colors.gold,
+    borderWidth: 3,
+    shadowColor: colors.gold,
+    shadowOpacity: 0.8,
+  },
 
-  // Pickup / Dropoff pins
+  // Floating location tag — white card above the pin with the address (Phase 19)
+  markerLabel: {
+    backgroundColor: colors.white,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 5,
+    maxWidth: 170,
+    boxShadow: elevationShadows.raised,
+  },
+  markerLabelText: {
+    fontFamily: fonts.semibold,
+    fontSize: 12,
+    color: colors.navy,
+  },
+
+  // Pickup (navy person) / Dropoff (gold flag) pins
   pinWrap: { alignItems: 'center' },
   pin: {
     width: 34,
@@ -1197,9 +1532,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: colors.background,
+    borderColor: colors.white,
   },
-  pinGlyph: { fontSize: 16 },
   pinStem: { width: 3, height: 10, marginTop: -1, borderRadius: 2 },
 
   // Permission Denied
@@ -1219,8 +1553,15 @@ const styles = StyleSheet.create({
     gap: 8,
     maxWidth: 360,
   },
-  permissionIcon: { fontSize: 32 },
-  permissionTitle: { fontSize: 17, fontWeight: '700', color: colors.textPrimary },
+  permissionIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: withAlpha(colors.rider, 0x12),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permissionTitle: { fontSize: 17, fontFamily: fonts.bold, color: colors.textPrimary },
   permissionMessage: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
   settingsButton: {
     marginTop: 4,
@@ -1229,7 +1570,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: colors.hairline,
   },
-  settingsText: { fontSize: 15, fontWeight: '600' },
+  settingsText: { fontSize: 15, fontFamily: fonts.semibold },
 
   // Loading overlay
   loadingOverlay: {

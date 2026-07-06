@@ -10,7 +10,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { colors, radius, typography, withAlpha } from '@/theme/theme';
+import { colors, withAlpha, fonts } from '@/theme/theme';
 import { haptics } from '@/lib/haptics';
 
 const THUMB_SIZE = 56;
@@ -91,6 +91,10 @@ export function SwipeToAccept({
     <View
       style={[styles.track, { borderColor: withAlpha(accent, 0x55) }]}
       onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint="Swipe or tap to confirm this action"
     >
       <Animated.View
         style={[styles.fill, { backgroundColor: withAlpha(accent, 0x26) }, fillStyle]}
@@ -126,7 +130,7 @@ const styles = StyleSheet.create({
   label: {
     textAlign: 'center',
     fontSize: 16,
-    fontWeight: typography.weightBold,
+    fontFamily: fonts.bold,
     letterSpacing: 0.5,
   },
   thumb: {

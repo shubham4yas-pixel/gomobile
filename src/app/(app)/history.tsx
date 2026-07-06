@@ -9,31 +9,22 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/useAuthStore';
 import { getDriverProfile } from '@/lib/driverProfile';
 import { fetchRideHistory, TripRecord } from '@/services/apiService';
 import { haptics } from '@/lib/haptics';
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-  shadows,
-  withAlpha,
-  accentFor,
-} from '@/theme/theme';
+import { colors, radius, spacing, shadows, withAlpha, accentFor, fonts } from '@/theme/theme';
 
 /**
- * Ride History screen (Phase 10)
+ * Rider Ride History screen (Phase 10 → enriched Phase 14)
  *
- * Lists a user's completed trips, fetched on mount from the dispatch server's
- * `GET /api/history/:userId` endpoint using the authenticated uid + role.
- *   • Rider view  → date · driver name · fare paid
- *   • Driver view → date · distance · fare earned
- * Works for both roles; pull-to-refresh re-fetches. Returns a friendly empty
- * state when there are no trips (or Firestore isn't configured server-side).
+ * Lists a rider's completed trips, fetched on mount from the dispatch server's
+ * `GET /api/history/:userId?role=rider` endpoint (filtered by the authenticated
+ * uid). Each row shows the date, the pickup → dropoff route, and the fare paid.
+ * Pull-to-refresh re-fetches; a friendly empty state covers no-trips / Firestore
+ * unconfigured. Drivers are redirected to their Earnings Dashboard.
  */
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -55,53 +46,63 @@ function formatCurrency(n: number, ccy = 'USD'): string {
   return `${sym}${(n ?? 0).toFixed(2)}`;
 }
 
-/** A single trip row — renders the rider or driver variant. */
-function TripHistoryCard({ trip, role }: { trip: TripRecord; role: 'rider' | 'driver' }) {
-  const accent = accentFor(role);
+/**
+ * A readable label for a trip endpoint. Prefers the address captured at booking
+ * (Phase 14); falls back to compact coordinates for trips persisted before
+ * addresses were stored, and to a dash when nothing is available.
+ */
+function formatPoint(point?: { lat: number; lng: number; address?: string | null }): string {
+  if (!point) return 'Unknown location';
+  if (point.address && point.address.trim()) return point.address.trim();
+  if (typeof point.lat === 'number' && typeof point.lng === 'number') {
+    return `${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}`;
+  }
+  return 'Unknown location';
+}
 
-  if (role === 'rider') {
-    const profile = getDriverProfile(trip.driverId);
-    return (
-      <View style={styles.card}>
-        <View style={[styles.avatar, { backgroundColor: withAlpha(accent, 0x18) }]}>
-          <Text style={[styles.avatarText, { color: accent }]}>{profile.initials}</Text>
-        </View>
-        <View style={styles.cardBody}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {profile.name}
+/** A single ride row — date header, pickup → dropoff route, fare. */
+function RideHistoryCard({ trip }: { trip: TripRecord }) {
+  const accent = accentFor('rider');
+  const profile = getDriverProfile(trip.driverId);
+
+  return (
+    <View style={styles.card}>
+      {/* Top line: date + fare */}
+      <View style={styles.cardHead}>
+        <Text style={styles.cardDate} numberOfLines={1}>
+          {formatDate(trip.date)}
+        </Text>
+        <View style={styles.fareWrap}>
+          <Text style={[styles.fare, { color: accent }]}>
+            {formatCurrency(trip.fare, trip.currency)}
           </Text>
-          <Text style={styles.cardSub} numberOfLines={1}>
-            {formatDate(trip.date)}
-          </Text>
-          <Text style={styles.cardMeta} numberOfLines={1}>
-            {profile.car} · {trip.distanceKm} km
-          </Text>
-        </View>
-        <View style={styles.cardRight}>
-          <Text style={[styles.fare, { color: accent }]}>{formatCurrency(trip.fare, trip.currency)}</Text>
           <Text style={styles.fareLabel}>Paid</Text>
         </View>
       </View>
-    );
-  }
 
-  // Driver view
-  return (
-    <View style={styles.card}>
-      <View style={[styles.avatar, { backgroundColor: withAlpha(accent, 0x18) }]}>
-        <Ionicons name="car-sport" size={22} color={accent} />
+      {/* Route: pickup → dropoff with a connecting rail */}
+      <View style={styles.route}>
+        <View style={styles.rail}>
+          <View style={[styles.dot, { backgroundColor: colors.success }]} />
+          <View style={styles.railLine} />
+          <View style={[styles.dot, styles.square, { backgroundColor: colors.danger }]} />
+        </View>
+        <View style={styles.routeBody}>
+          <Text style={styles.routeText} numberOfLines={1}>
+            {formatPoint(trip.pickup)}
+          </Text>
+          <Text style={[styles.routeText, styles.routeDrop]} numberOfLines={1}>
+            {formatPoint(trip.dropoff)}
+          </Text>
+        </View>
       </View>
-      <View style={styles.cardBody}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {formatDate(trip.date)}
+
+      {/* Footer: driver + distance */}
+      <View style={styles.cardFoot}>
+        <Ionicons name="person-circle-outline" size={16} color={colors.textMuted} />
+        <Text style={styles.footText} numberOfLines={1}>
+          {profile.name} · {profile.car} · {trip.distanceKm} km
         </Text>
-        <Text style={styles.cardSub} numberOfLines={1}>
-          {trip.distanceKm} km · {trip.durationMin} min
-        </Text>
-      </View>
-      <View style={styles.cardRight}>
-        <Text style={[styles.fare, { color: accent }]}>{formatCurrency(trip.fare, trip.currency)}</Text>
-        <Text style={styles.fareLabel}>Earned</Text>
       </View>
     </View>
   );
@@ -111,8 +112,7 @@ export default function HistoryScreen() {
   const router = useRouter();
   const role = (useAuthStore((s) => s.role) ?? 'rider') as 'rider' | 'driver';
   const user = useAuthStore((s) => s.user);
-  const accent = accentFor(role);
-  const isRider = role === 'rider';
+  const accent = accentFor('rider');
 
   const [trips, setTrips] = useState<TripRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,11 +124,11 @@ export default function HistoryScreen() {
       setTrips([]);
       return;
     }
-    const data = await fetchRideHistory(uid, role);
+    const data = await fetchRideHistory(uid, 'rider');
     setTrips(data);
-  }, [user?.uid, role]);
+  }, [user?.uid]);
 
-  // Fetch on mount (and whenever the user/role changes).
+  // Fetch on mount (and whenever the user changes).
   useEffect(() => {
     let active = true;
     (async () => {
@@ -152,6 +152,11 @@ export default function HistoryScreen() {
     haptics.selection();
     router.back();
   }, [router]);
+
+  // Drivers get the Earnings Dashboard instead of a plain ride list (Phase 14).
+  if (role === 'driver') {
+    return <Redirect href="/earnings" />;
+  }
 
   const totalFare = trips.reduce((sum, t) => sum + (t.fare || 0), 0);
   const currency = trips[0]?.currency ?? 'USD';
@@ -181,16 +186,14 @@ export default function HistoryScreen() {
           </View>
           <Text style={styles.emptyTitle}>No rides yet</Text>
           <Text style={styles.emptySub}>
-            {isRider
-              ? 'Your completed trips will show up here after your first ride.'
-              : 'Trips you complete will show up here with your earnings.'}
+            Your completed trips will show up here after your first ride.
           </Text>
         </View>
       ) : (
         <FlatList
           data={trips}
           keyExtractor={(t) => t.tripId}
-          renderItem={({ item }) => <TripHistoryCard trip={item} role={role} />}
+          renderItem={({ item }) => <RideHistoryCard trip={item} />}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
@@ -199,7 +202,7 @@ export default function HistoryScreen() {
                 {trips.length} {trips.length === 1 ? 'ride' : 'rides'}
               </Text>
               <Text style={[styles.summaryFare, { color: accent }]}>
-                {formatCurrency(totalFare, currency)} {isRider ? 'spent' : 'earned'}
+                {formatCurrency(totalFare, currency)} spent
               </Text>
             </View>
           }
@@ -223,8 +226,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   backBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 72, gap: 2 },
-  backText: { color: colors.textPrimary, fontSize: 16, fontWeight: typography.weightMedium },
-  headerTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: typography.weightBold },
+  backText: { color: colors.textPrimary, fontSize: 16, fontFamily: fonts.medium },
+  headerTitle: { color: colors.textPrimary, fontSize: 18, fontFamily: fonts.bold },
 
   center: {
     flex: 1,
@@ -242,7 +245,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: typography.weightBold },
+  emptyTitle: { color: colors.textPrimary, fontSize: 18, fontFamily: fonts.bold },
   emptySub: { color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 20 },
 
   listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
@@ -253,13 +256,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: 2,
   },
-  summaryCount: { color: colors.textSecondary, fontSize: 14, fontWeight: typography.weightMedium },
-  summaryFare: { fontSize: 16, fontWeight: typography.weightBold },
+  summaryCount: { color: colors.textSecondary, fontSize: 14, fontFamily: fonts.medium },
+  summaryFare: { fontSize: 16, fontFamily: fonts.bold },
 
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
@@ -268,13 +268,34 @@ const styles = StyleSheet.create({
     borderColor: colors.hairline,
     ...shadows.card,
   },
-  avatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 16, fontWeight: typography.weightBold },
-  cardBody: { flex: 1, gap: 2 },
-  cardTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: typography.weightBold },
-  cardSub: { color: colors.textSecondary, fontSize: 13 },
-  cardMeta: { color: colors.textMuted, fontSize: 12 },
-  cardRight: { alignItems: 'flex-end' },
-  fare: { fontSize: 17, fontWeight: typography.weightHeavy },
-  fareLabel: { color: colors.textMuted, fontSize: 12, marginTop: 1 },
+  cardHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  cardDate: { flex: 1, color: colors.textSecondary, fontSize: 13, fontFamily: fonts.medium },
+  fareWrap: { alignItems: 'flex-end', marginLeft: spacing.md },
+  fare: { fontSize: 18, fontFamily: fonts.heavy },
+  fareLabel: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+
+  route: { flexDirection: 'row', gap: spacing.md },
+  rail: { width: 12, alignItems: 'center', paddingTop: 5 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  square: { borderRadius: 3 },
+  railLine: { width: 2, flex: 1, minHeight: 22, backgroundColor: colors.hairlineStrong, marginVertical: 3 },
+  routeBody: { flex: 1, justifyContent: 'space-between' },
+  routeText: { color: colors.textPrimary, fontSize: 15, fontFamily: fonts.medium },
+  routeDrop: { marginTop: spacing.lg },
+
+  cardFoot: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.hairline,
+  },
+  footText: { flex: 1, color: colors.textMuted, fontSize: 12 },
 });

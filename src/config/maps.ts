@@ -21,4 +21,4 @@ const fromConfig =
 export const GOOGLE_MAPS_API_KEY: string =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ??
   fromConfig ??
-  'AIzaSyCg2w9-phYSQqJ762uzt9CgFlt6-Cj6RFs';
+  '';

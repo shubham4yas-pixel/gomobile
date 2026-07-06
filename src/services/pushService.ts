@@ -1,10 +1,13 @@
+import { logger } from '@/lib/logger';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { firestore } from '@/config/firebase';
 
 /**
- * Push Notifications service (Phase 12).
+ * Push Notifications service (Phase 12, hardened Phase 15).
  *
  * Requests OS permission and fetches the device's Expo push token, which the
  * caller registers with the dispatch server (`push:register-token`). The server
@@ -40,7 +43,7 @@ function getProjectId(): string | undefined {
 export async function registerForPushNotifications(): Promise<string | null> {
   try {
     if (!Device.isDevice) {
-      console.log('[Push] Skipping — push tokens require a physical device.');
+      logger.debug('[Push] Skipping — push tokens require a physical device.');
       return null;
     }
 
@@ -61,7 +64,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
       status = req.status;
     }
     if (status !== 'granted') {
-      console.log('[Push] Permission not granted — no token.');
+      logger.debug('[Push] Permission not granted — no token.');
       return null;
     }
 
@@ -69,12 +72,35 @@ export async function registerForPushNotifications(): Promise<string | null> {
     const tokenResponse = await Notifications.getExpoPushTokenAsync(
       projectId ? { projectId } : undefined
     );
-    console.log('[Push] Expo push token acquired.');
+    logger.debug('[Push] Expo push token acquired.');
     return tokenResponse.data;
   } catch (e) {
     // Most commonly: running inside Expo Go on SDK 53+ (remote push removed).
-    console.log('[Push] Could not get push token (expected in Expo Go):', (e as Error).message);
+    logger.debug('[Push] Could not get push token (expected in Expo Go):', (e as Error).message);
     return null;
+  }
+}
+
+/**
+ * Persist the push token directly to Firestore `push_tokens/{userId}` via the
+ * client SDK. This is a belt-and-suspenders backup — the primary path is the
+ * socket `push:register-token` event, but if the socket drops during
+ * registration the token still reaches Firestore through this write. (Phase 15)
+ */
+export async function savePushTokenToFirestore(
+  userId: string,
+  token: string
+): Promise<void> {
+  if (!firestore || !userId || !token) return;
+  try {
+    await setDoc(
+      doc(firestore, 'push_tokens', userId),
+      { userId, token, updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    logger.debug('[Push] Token persisted to Firestore for', userId);
+  } catch (e) {
+    logger.warn('[Push] Firestore token write failed:', (e as Error).message);
   }
 }
 
@@ -87,4 +113,36 @@ export function addForegroundListener(
 ): () => void {
   const sub = Notifications.addNotificationReceivedListener(handler);
   return () => sub.remove();
+}
+
+/**
+ * Subscribe to notification TAPS (Phase 14, tap-to-open). Fires when the user
+ * taps a notification while the app is foregrounded or backgrounded. The handler
+ * receives the notification's `data` payload (e.g. `{ type, tripId }`).
+ * Returns an unsubscribe function.
+ */
+export function addNotificationResponseListener(
+  handler: (data: Record<string, any>) => void
+): () => void {
+  const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+    handler(response.notification.request.content.data ?? {});
+  });
+  return () => sub.remove();
+}
+
+/**
+ * Read the notification that cold-started the app (Phase 14). Returns its `data`
+ * payload when the app was launched by tapping a notification, else null. Call
+ * once after navigation is ready to route the initial screen.
+ */
+export async function getInitialNotificationData(): Promise<Record<string, any> | null> {
+  // Not supported on web — there is no notification-launched cold start there.
+  if (Platform.OS === 'web') return null;
+  try {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    return response?.notification.request.content.data ?? null;
+  } catch (e) {
+    logger.debug('[Push] getLastNotificationResponse unavailable:', (e as Error).message);
+    return null;
+  }
 }

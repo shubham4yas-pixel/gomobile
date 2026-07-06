@@ -21,6 +21,10 @@ export type RideStatus =
 export interface LatLng {
   lat: number;
   lng: number;
+  /** Human-readable label captured at booking time (Phase 14 wire change).
+   *  Rides along in trip:request/offered/confirmed payloads — drives the
+   *  floating location tags on the map (Phase 19). */
+  address?: string | null;
 }
 
 export interface RideOffer {
@@ -75,6 +79,56 @@ export interface Receipt {
   baseFare: number;
   perKmRate: number;
   currency: string;
+}
+
+/**
+ * Trip summary + digital-receipt contract.
+ *
+ * Born as the pre-completion estimate shown at ARRIVED_AT_DESTINATION (Phase 16);
+ * extended (Phase 20) into the single data object the `RiderReceiptCard`
+ * consumes. Everything below the required core is OPTIONAL, so:
+ *   • the pre-completion summary still populates only the core fields, and
+ *   • a backend-generated receipt can later populate the full object with no
+ *     UI or call-site changes (the receipt UI mocks any absent metadata).
+ */
+export interface TripSummary {
+  // ── Core (required) ──
+  distanceKm: number;
+  durationMin: number;
+  estimatedFare: number;
+  estimatedEarnings: number; // For driver
+  currency: string;
+
+  // ── Fare breakdown components (charges; all optional) ──
+  baseFare?: number;
+  distanceFare?: number;
+  waitingFees?: number;
+  tolls?: number;
+  platformFee?: number;
+  taxes?: number;
+  tip?: number;
+  // Credits — stored positive, rendered negative by the receipt.
+  discounts?: number;
+  promo?: number;
+
+  // ── Receipt identity & metadata (backend-populated later; mocked in UI) ──
+  tripId?: string;
+  paymentId?: string;
+  transactionId?: string;
+  invoiceNumber?: string;
+  completedAt?: string; // ISO 8601
+
+  // ── Parties & route ──
+  driverName?: string;
+  vehicleModel?: string;
+  vehicleNumber?: string;
+  pickupAddress?: string;
+  dropoffAddress?: string;
+
+  // ── Payment ──
+  paymentMethod?: string;
+  paymentStatus?: 'PAID' | 'PENDING' | 'FAILED' | 'REFUNDED';
+  amountPaid?: number;
 }
 
 interface RideState {
