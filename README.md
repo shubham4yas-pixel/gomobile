@@ -1,56 +1,92 @@
-# Welcome to your Expo app 👋
+# GO RideShare Project
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A modern, full-stack ride-sharing platform built with Expo (React Native), Firebase, and Socket.IO.
 
-## Get started
+## Project Overview
 
-1. Install dependencies
+This repository contains the `mobile-app` workspace which powers both the Rider and Driver applications through a unified, environment-variant architecture (`EXPO_PUBLIC_APP_VARIANT`). The application supports real-time location tracking, live driver matching, a complete trip state machine, and secure payments.
 
-   ```bash
-   npm install
-   ```
+## Architecture
 
-2. Start the app
+The system is separated into three logical domains:
+- **Rider App**: Handles destination search, fare estimation, driver matching, and payment collection.
+- **Driver App**: Handles incoming ride requests, navigation, ride lifecycle management, and earnings.
+- **Backend (External)**: A Node.js/Express server managing the Socket.IO rooms, Razorpay payment webhooks, and Firebase Admin validation. (Note: currently stored outside this repository).
 
-   ```bash
-   npx expo start
-   ```
+## Technologies
 
-In the output, you'll find options to open the app in a
+- **Frontend**: React Native, Expo, Reanimated 3, Gorhom Bottom Sheet
+- **State/Data**: React Context, Firebase Auth, Firestore
+- **Real-time**: Socket.IO client (`socket.io-client`)
+- **Maps**: `react-native-maps`, Google Maps Directions API
+- **Payments**: Razorpay
+- **Styling**: Strict custom theme (`theme.ts`), Inter typography, Glassmorphism elements
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Folder Structure
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+mobile-app/
+├── app.config.ts         # Expo configuration and variant switching
+├── src/
+│   ├── app/              # Expo Router pages (auth, main app)
+│   ├── components/       # Reusable UI (BottomSheet, MapView, GlassCard)
+│   ├── config/           # Firebase, Maps, and Variant initialisation
+│   ├── lib/              # Utilities (logger, errorReporter)
+│   ├── services/         # Socket, Auth, Ride state management
+│   └── theme/            # Design system tokens and styles
+└── docs/                 # QA Checklists and architecture notes
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Environment Variables
 
-### Other setup steps
+To run the mobile app, you must configure an `.env` file in the root of `mobile-app/`:
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```env
+# Google Maps
+EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_key
 
-## Learn more
+# Firebase
+EXPO_PUBLIC_FIREBASE_API_KEY=your_firebase_key
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+# ... (standard Firebase config)
 
-To learn more about developing your project with Expo, look at the following resources:
+# App Variant (rider | driver)
+EXPO_PUBLIC_APP_VARIANT=rider
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+# Backend
+EXPO_PUBLIC_API_URL=http://your-local-ip:3000
+```
 
-## Join the community
+## Installation & Running Locally
 
-Join our community of developers creating universal apps.
+1. Install dependencies:
+```bash
+npm install
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+2. Start the Metro bundler:
+```bash
+# To run the Rider variant
+EXPO_PUBLIC_APP_VARIANT=rider npx expo start
+
+# To run the Driver variant
+EXPO_PUBLIC_APP_VARIANT=driver npx expo start
+```
+
+## Building APKs
+
+To build for production using Expo Application Services (EAS):
+
+```bash
+# Rider APK
+eas build --profile production-rider --platform android
+
+# Driver APK
+eas build --profile production-driver --platform android
+```
+
+## Future Roadmap
+
+- **Background Location**: Migrate JS-thread location tracking to native foreground services (Expo TaskManager/Location) for drivers.
+- **Push Notifications**: Implement FCM for offline ping delivery.
+- **Dynamic Pricing**: Integrate surge pricing models in the backend.

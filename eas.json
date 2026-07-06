@@ -8,27 +8,13 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_SOCKET_URL": "https://puny-clocks-sleep.loca.lt",
-        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBEJmtIHeZ-2hjJ-RhjvVmYTM-449SUpMo",
-        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "current-ae375.firebaseapp.com",
-        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "current-ae375",
-        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "current-ae375.firebasestorage.app",
-        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "689027507410",
-        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:689027507410:web:4289c5cc1019257959f90b",
-        "EXPO_PUBLIC_WEB_CLIENT_ID": "689027507410-06d1iq3fularteqcpj8k7k686n5g4p4i.apps.googleusercontent.com"
+        "EXPO_PUBLIC_SOCKET_URL": "https://puny-clocks-sleep.loca.lt"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_SOCKET_URL": "https://puny-clocks-sleep.loca.lt",
-        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBEJmtIHeZ-2hjJ-RhjvVmYTM-449SUpMo",
-        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "current-ae375.firebaseapp.com",
-        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "current-ae375",
-        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "current-ae375.firebasestorage.app",
-        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "689027507410",
-        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:689027507410:web:4289c5cc1019257959f90b",
-        "EXPO_PUBLIC_WEB_CLIENT_ID": "689027507410-06d1iq3fularteqcpj8k7k686n5g4p4i.apps.googleusercontent.com"
+        "EXPO_PUBLIC_SOCKET_URL": "https://puny-clocks-sleep.loca.lt"
       },
       "android": {
         "buildType": "apk"
